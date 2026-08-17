@@ -1,5 +1,7 @@
 # dsh-fold-turns
 
+English | [简体中文](./README.zh-CN.md)
+
 > Experimental: this plugin relies on DeepSeek Harness browser and Chat DOM contracts that are not yet stable public APIs. Use it with the verified host version below and keep a rollback path.
 
 `dsh-fold-turns` is a Web-only DeepSeek Harness plugin. It collapses the completed intermediate process of an eligible Chat turn while preserving the host's native renderers and their local state.

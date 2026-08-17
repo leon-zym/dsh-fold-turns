@@ -36,6 +36,8 @@ describe('release package contract', () => {
 
     expect(manifest.license).toBe('MIT')
     expect(manifest.files).toContain('LICENSE')
+    expect(manifest.files).toContain('README.md')
+    expect(manifest.files).toContain('README.zh-CN.md')
     expect(license).toContain('Permission is hereby granted, free of charge')
     expect(license).toContain('THE SOFTWARE IS PROVIDED "AS IS"')
   })
