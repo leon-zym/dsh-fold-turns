@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, relative, resolve } from 'node:path'
 import { transform } from 'lightningcss'
-import { defineConfig, type UserConfig } from 'tsdown'
+import { defineConfig, type TsdownPlugin, type UserConfig } from 'tsdown'
 
 const PLUGIN_ID = 'dsh-fold-turns'
 const PLATFORM_EXTERNALS = [
@@ -66,36 +66,59 @@ function clientConfig(): UserConfig {
   }
 }
 
-function cssModulePlugin(): NonNullable<UserConfig['plugins']>[number] {
+function cssModulePlugin(): TsdownPlugin {
+  const files = new Map<string, string>()
   return {
     name: 'dsh-fold-turns-css-modules',
     resolveId(source, importer) {
       if (!source.endsWith('.module.css')) return null
-      return `${CSS_PREFIX}${resolve(dirname(importer ?? process.cwd()), source)}${CSS_SUFFIX}`
+      const file = resolve(dirname(importer ?? process.cwd()), source)
+      const projectPath = relative(process.cwd(), file).replaceAll('\\', '/')
+      if (projectPath === '..' || projectPath.startsWith('../')) {
+        throw new Error(`CSS module is outside the project root: ${projectPath}`)
+      }
+      const id = `${CSS_PREFIX}${projectPath}${CSS_SUFFIX}`
+      files.set(id, file)
+      return id
     },
     async load(id) {
       if (!id.startsWith(CSS_PREFIX)) return null
-      const file = id.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
+      const file = files.get(id)
+      if (file === undefined) throw new Error(`Unknown CSS module: ${id}`)
+      const projectPath = id.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
       this.addWatchFile(file)
       const source = await readFile(file)
       const compiled = transform({
-        filename: file,
+        filename: projectPath,
         code: source,
         cssModules: { pattern: '[hash]_[local]' },
         minify: true,
       })
       const classes: Record<string, string> = {}
-      for (const [local, value] of Object.entries(compiled.exports ?? {})) classes[local] = value.name
+      for (const [local, value] of Object.entries(compiled.exports ?? {}).sort(([left], [right]) => left.localeCompare(right))) {
+        classes[local] = value.name
+      }
       const tagId = `${PLUGIN_ID}/${basename(file)}`
       return [
         `const css = ${JSON.stringify(compiled.code.toString())};`,
         `const tagId = ${JSON.stringify(tagId)};`,
-        "if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']') === null) {",
-        "  const tag = document.createElement('style');",
-        `  tag.dataset.plugin = ${JSON.stringify(PLUGIN_ID)};`,
-        "  tag.dataset.pluginCss = tagId;",
+        `const styleOwnerKey = ${JSON.stringify('__dshFoldTurnsStyleOwner')};`,
+        'const styleOwner = {};',
+        "if (typeof document !== 'undefined') {",
+        "  let tag = document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']');",
+        '  if (tag === null) {',
+        "    tag = document.createElement('style');",
+        `    tag.dataset.plugin = ${JSON.stringify(PLUGIN_ID)};`,
+        "    tag.dataset.pluginCss = tagId;",
+        '    document.head.appendChild(tag);',
+        '  }',
+        '  tag[styleOwnerKey] = styleOwner;',
         '  tag.textContent = css;',
-        '  document.head.appendChild(tag);',
+        '}',
+        'export function disposeStyles() {',
+        "  if (typeof document === 'undefined') return;",
+        "  const tag = document.querySelector('style[data-plugin-css=' + JSON.stringify(tagId) + ']');",
+        '  if (tag !== null && tag[styleOwnerKey] === styleOwner) tag.remove();',
         '}',
         `export default ${JSON.stringify(classes)};`,
       ].join('\n')

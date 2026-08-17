@@ -19,6 +19,11 @@ describe('prebuilt client bundle', () => {
   it('registers one host-module factory and only requests approved shared externals', async () => {
     const source = await readFile(resolve(ROOT, 'lib/client.js'), 'utf8')
     const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>')
+    const staleStyle = dom.window.document.createElement('style')
+    staleStyle.dataset.plugin = 'dsh-fold-turns'
+    staleStyle.dataset.pluginCss = 'dsh-fold-turns/FoldToggle.module.css'
+    staleStyle.textContent = 'stale-css'
+    dom.window.document.head.append(staleStyle)
     const registrations: Array<{ readonly id: string; readonly factory: (require: (id: string) => unknown) => unknown }> = []
     const runtime = {
       createSnapshotStore: <T,>(initial: T) => ({
@@ -63,7 +68,20 @@ describe('prebuilt client bundle', () => {
     expect(exports.apply).toEqual(expect.any(Function))
     expect(exports.inject).toEqual(['conversationEvents', 'slots', 'sessions', 'locale'])
     expect([...requested].sort()).toEqual(Object.keys(externals).sort())
-    expect(dom.window.document.querySelector('style[data-plugin="dsh-fold-turns"]')).not.toBeNull()
+    const styles = dom.window.document.querySelectorAll('style[data-plugin="dsh-fold-turns"]')
+    expect(styles).toHaveLength(1)
+    expect(styles[0]?.textContent).not.toBe('stale-css')
+    expect(styles[0]?.textContent?.length).toBeGreaterThan(100)
+  })
+
+  it('declares every directly required DSH client package in the browser dependency graph', async () => {
+    const source = await readFile(resolve(ROOT, 'lib/client.js'), 'utf8')
+    const manifest = JSON.parse(await readFile(resolve(ROOT, 'package.json'), 'utf8')) as {
+      readonly dsh?: { readonly client?: { readonly inject?: readonly string[] } }
+    }
+    const requiredDshPackages = [...source.matchAll(/require\("(@deepseek-ai\/dsh-client-[^"]+?)(?:\/client)?"\)/g)]
+      .map(match => match[1])
+    expect(manifest.dsh?.client?.inject).toEqual(expect.arrayContaining(requiredDshPackages))
   })
 
   it('keeps the Node loader placeholder importable from the package entry', async () => {

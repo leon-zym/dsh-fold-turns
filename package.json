@@ -3,6 +3,17 @@
   "version": "0.1.4",
   "description": "Fold completed DeepSeek Harness chat turns without replacing native renderers.",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/leon-zym/dsh-fold-turns.git"
+  },
+  "bugs": {
+    "url": "https://github.com/leon-zym/dsh-fold-turns/issues"
+  },
+  "homepage": "https://github.com/leon-zym/dsh-fold-turns#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "main": "./lib/index.mjs",
   "types": "./lib/types/index.d.ts",
@@ -20,7 +31,8 @@
   "files": [
     "lib",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
@@ -31,17 +43,27 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-conversation",
-        "@deepseek-ai/dsh-client-locale"
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-primitives"
       ]
     }
   },
   "scripts": {
     "build": "pnpm run typecheck && tsdown && pnpm run build:types",
     "build:types": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.tools.json",
+    "test": "pnpm run build && pnpm run test:unit",
+    "test:unit": "vitest run",
     "test:bundle": "pnpm run build && vitest run tests/client-bundle.spec.ts",
+    "test:browser": "pnpm run build && playwright test",
+    "test:dsh": "node tests/browser/real-dsh-smoke.mjs",
+    "test:dsh-session": "pnpm run build && node tests/browser/run-real-dsh-session-gate.mjs",
     "test:watch": "vitest",
+    "audit": "pnpm audit --audit-level low",
+    "verify:release": "pnpm run test && pnpm run test:browser && pnpm run audit",
+    "verify:host": "REQUIRE_REAL_DSH=1 pnpm run test:dsh && pnpm run test:dsh-session",
+    "prepack": "pnpm run build",
+    "prepublishOnly": "pnpm run verify:release && pnpm run verify:host && pnpm run pack:dry",
     "pack:dry": "pnpm pack --dry-run"
   },
   "peerDependencies": {
@@ -54,6 +76,16 @@
     "@deepseek-ai/dsh-client-web-react": "^0.1.0-rc.6",
     "react": "^18.2.0"
   },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": { "optional": true },
+    "@deepseek-ai/dsh-client-locale": { "optional": true },
+    "@deepseek-ai/dsh-client-runtime": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-conversation": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-primitives": { "optional": true },
+    "@deepseek-ai/dsh-client-ui-slots": { "optional": true },
+    "@deepseek-ai/dsh-client-web-react": { "optional": true },
+    "react": { "optional": true }
+  },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-locale": "0.1.0-rc.6",
@@ -63,6 +95,7 @@
     "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.6",
     "@deepseek-ai/dsh-client-web-react": "0.1.0-rc.6",
     "@testing-library/react": "^16.3.2",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
@@ -76,5 +109,6 @@
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
-  }
+  },
+  "packageManager": "pnpm@11.21.0"
 }
