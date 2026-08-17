@@ -31,9 +31,9 @@ DOM wrapper 会移动 React 管理的行；renderer shadow 会复制原生 rende
 ```text
 用户消息
 顶部 toggle
-所有原生过程与 closing assistant 的 Think
+所有原生过程
+closing assistant（包括 Think 与非 Think 正文）
 底部 toggle
-closing assistant 的非 Think 正文
 ```
 
 图示省略宿主已有的 turn-tail 操作行。它继续由宿主渲染并保持可见，插件不复制其中的消息操作、分支操作或扩展插槽。
@@ -82,6 +82,8 @@ Cordis 根据这组服务依赖等待插件激活。报告和实现中必须区�
 - CSS 由插件 bundle 注入并带插件所有权标识，卸载时可完整删除。
 
 默认发布预构建 npm 包或 tarball。直接从 GitHub 安装需要 `prepare`，pnpm 还要求用户允许安装期构建，不适合作为普通用户的默认路径。
+
+实现后的发布工程采用 `prepack`，使干净 clone 执行 `pnpm pack` 时生成预构建产物，但不在普通依赖安装期间运行 `prepare`。React 与 DSH 客户端包仍由宿主模块表提供；它们保留为 optional peer 以表达兼容范围，同时避免 profile 安装重复解析宿主内置模块。`dsh.client.inject` 必须覆盖浏览器产物直接 require 的每一个 DSH 客户端包，当前包括 `ui-primitives`。
 
 上游依据：
 
@@ -198,7 +200,7 @@ store 不声明 `persist`。同一个 handle 传给 `fold-start` 和 `fold-end` 
 插件注册两个 Chat 节点类型：
 
 - `fold-start` 位于匹配的人类输入之后，eligible turn 在折叠和展开时都显示。
-- `fold-end` 位于 closing assistant 之前，只在展开时显示。
+- `fold-end` 位于 closing assistant 之后、turn-tail 之前，只在展开时显示。
 
 两个节点都通过 `conversation.chat.node` 注册 React renderer，不向 Chat 列表手工插入 DOM 兄弟节点。
 
@@ -214,7 +216,7 @@ Controller 在最终 ChatSnapshot 中匹配同 seq 的原生节点。它优先�
 
 #### fold-end
 
-`fold-end` 在 `turn/end` 上创建。Conversation assembler 会先发布 location data，再构建 view nodes，因此 `fold-end.buildViewNode()` 可以从当前 `TurnLocation.data` 读取 `turn-tail.closing`，把自身锚点放在 closing assistant 之前。
+`fold-end` 在 `turn/end` 上创建。Conversation assembler 会先发布 location data，再构建 view nodes，因此 `fold-end.buildViewNode()` 可以从当前 `TurnLocation.data` 读取 `turn-tail.closing`，把自身锚点放在 closing assistant 之后、turn-tail 之前。这样视觉、DOM、键盘和屏幕阅读器顺序保持一致。
 
 closing 不可用时，Definition 仍保持稳定 key，但节点不可见或 renderer 返回空内容。增量更新后不能撤回已 materialize 的 node key。
 
@@ -270,14 +272,14 @@ data-chat-flow-kind
 1. 从 `TurnFoldPlan` 取得目标 key，不从 DOM 猜 turn。
 2. 在当前 `data-chat-flow` 内遍历行并比较 `dataset.chatAnchorKey`。
 3. 验证每个目标 key 只映射到一行，且所有行属于当前 session view。
-4. 验证 user、顶部 toggle、过程、底部 toggle、closing assistant 和 turn-tail 的相对顺序。
+4. 验证 user、顶部 toggle、过程、closing assistant、底部 toggle 和 turn-tail 的相对顺序。
 5. 验证通过后，一次性应用该 turn 的稳定状态。
 
 若用 CSS selector 查 key，必须经过 `CSS.escape()`。直接遍历元素并比较 dataset 可以减少 selector 拼接错误。
 
 ### 不移动 React 管理的行
 
-ChatView 直接把 `order` 映射为直属 ChatNodeSeat。插件不得把这些行移动到新 wrapper，也不得增删 React 管理的 children。允许的写入只有 adapter 明确拥有的 `data-dsh-fold-*` 属性、`inert`、`aria-hidden` 和约定的内联 `display`、`transform` 属性。
+ChatView 直接把 `order` 映射为直属 ChatNodeSeat。插件不得把这些行移动到新 wrapper，也不得增删 React 管理的 children。允许的写入只有 adapter 明确拥有的 `data-dsh-fold-*` 属性、`inert`、`aria-hidden` 和约定的内联 `display` 属性。
 
 每次写入都记录旧值、插件写入值和 ownership epoch。清理时只恢复仍等于插件写入值的属性；若宿主或其他插件已经改写，清理不覆盖新值。React 开始管理某个现有属性时，view probe 应在任何折叠前失败。
 
@@ -303,7 +305,9 @@ reasoning 行内部的 React state 始终保留。用户展开 turn 后，Think 
 
 收起和展开都不使用高度或 margin 动画。一次提交内同时隐藏过程 ChatNodeSeat、closing Think 和底部 toggle，避免临时 flex gap 造成闪烁。
 
-当 closing Think 是正文容器的前导子项时，adapter 仅写入自有的 `transform`，把 Think 视觉上放在底部 toggle 之前，并把 toggle 下移到 Think 与正文之间。它不重排 React 拥有的 DOM，也不移动 closing assistant 正文。Think disclosure 高度变化时，`ResizeObserver` 重新计算这两个偏移。
+底部 toggle 的 Definition 锚点天然位于完整 closing assistant 行之后，因此 adapter 不做视觉重排，也不写 `transform`。折叠时只隐藏 closing 行内的 Think；非 Think 正文保持在原行，展开后底部 toggle 在视觉、DOM、键盘和屏幕阅读器顺序中都位于完整 closing assistant 之后。
+
+adapter 为存在折叠 turn 的 `data-chat-flow` 安装 `MutationObserver`。直属 ChatNodeSeat 被插入或替换时重新核对精确 key 映射；turn 仍处于 `checking` 时也观察子树提交，以等待 closing 行内迟到的 Think。映射重新完整后一次性恢复目标折叠状态，不通过定时器或尺寸观察器推测宿主何时稳定。
 
 ### 焦点
 
@@ -482,7 +486,7 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 
 - 只有 `completed` turn 可以 eligible，其他终态和未来未知值 fail-open。
 - `fold-start` 优先匹配最后一个普通 user；没有匹配 user 时回退到 steering candidate。
-- `fold-end` 排在 closing assistant 之前，并在 location data 可用后读取 closing。
+- `fold-end` 排在 closing assistant 之后、turn-tail 之前，并在 location data 可用后读取 closing。
 - closing 缺失、`branchUnavailable`、负 duration 和不完整边界保持展开。
 - 节点分类表覆盖 adapter 声明的全部 kind，未知 kind 整 turn fail-open。
 - hidden key 不包含 user、steering、closing 正文、turn-tail 和人类输入节点。
@@ -518,7 +522,7 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 - error、max tokens、取消、blocked、interrupted 和无 final assistant。
 - session 切换保留状态，刷新页面恢复默认折叠。
 - 快速连续点击、切 session、卸载和两个 turn 同时操作。
-- Think disclosure 高度变化时，底部 toggle 与正文保持正确顺序。
+- closing assistant 与底部 toggle 的视觉、DOM、键盘和屏幕阅读器顺序一致。
 - `prefers-reduced-motion`、键盘和屏幕阅读器基本操作。
 - 上游增加未知 node kind 或改变 DOM 属性时正确 fail-open。
 
@@ -537,6 +541,8 @@ dsh --profile web
 每次适配新的 DSH 实现时，重复 pack、install、boot、DOM probe 和浏览器流程，并更新已验证宿主矩阵。版本相同但 capability signature 不同的构建也要分别记录。
 
 ## 发布门禁
+
+仓库自动化将门禁分为四层：单元与打包契约、真实 Chromium 中的 bundle/CSS 契约、可选的真实 DSH tarball 安装与 Web 启动，以及针对 DSH 源码 checkout 的真实 session 门禁。设置 GitHub 仓库变量 `RUN_REAL_DSH_SMOKE=true` 后启用 CI 的 tarball 启动层；该可选 CI job 不等于完整发布门禁。正式发布通过 `pnpm run verify:host` 强制执行真实 CLI smoke 和源码 session gate；两者都校验 `EXPECTED_DSH_VERSION`（默认 `0.1.0-rc.6`），session runner 还拒绝版本不符的源码 checkout。真实 session 门禁覆盖流式完成、折叠/展开、键盘焦点、会话切换、分页和滚动锚点。真实读屏器与视觉检查仍是人工发布门禁，不能由自动化或空白 Web 启动替代。
 
 满足以下条件后才能发布：
 
