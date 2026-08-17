@@ -34,7 +34,7 @@ jobs:
       - run: mkdir -p packed && pnpm pack --pack-destination packed
       - run: tar -tzf packed/*.tgz
       - uses: actions/upload-artifact@v4
-        if: matrix.node == 22.19.0
+        if: matrix.node == '22.19.0'
         with:
           name: npm-tarball
           path: packed/*.tgz
