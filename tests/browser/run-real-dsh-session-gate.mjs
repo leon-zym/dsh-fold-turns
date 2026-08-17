@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process'
-import { constants, copyFileSync, lstatSync, readFileSync, unlinkSync } from 'node:fs'
+import {
+  closeSync,
+  constants,
+  copyFileSync,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+} from 'node:fs'
 import { resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '../..')
@@ -9,6 +18,7 @@ const gate = resolve(import.meta.dirname, 'real-dsh-session-gate.ts')
 const gateSource = readFileSync(gate)
 const mountedGate = resolve(dshRoot, 'apps/web/tests/dsh-fold-turns.external.e2e.ts')
 let createdGateIdentity
+let createdGateDescriptor
 
 try {
   const manifest = JSON.parse(readFileSync(resolve(dshRoot, 'package.json'), 'utf8'))
@@ -21,7 +31,8 @@ try {
   } catch (error) {
     if (error.code !== 'ENOENT') throw error
     copyFileSync(gate, mountedGate, constants.COPYFILE_EXCL)
-    const created = lstatSync(mountedGate)
+    createdGateDescriptor = openSync(mountedGate, 'r')
+    const created = fstatSync(createdGateDescriptor)
     createdGateIdentity = { dev: created.dev, ino: created.ino }
   }
   const result = spawnSync('pnpm', [
@@ -36,7 +47,11 @@ try {
   if (result.error !== undefined) throw result.error
   process.exitCode = result.status ?? 1
 } finally {
-  if (createdGateIdentity !== undefined) removeCreatedGateCopy(createdGateIdentity)
+  try {
+    if (createdGateIdentity !== undefined) removeCreatedGateCopy(createdGateIdentity)
+  } finally {
+    if (createdGateDescriptor !== undefined) closeSync(createdGateDescriptor)
+  }
 }
 
 function removeCreatedGateCopy(identity) {
