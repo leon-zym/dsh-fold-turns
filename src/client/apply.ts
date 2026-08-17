@@ -2,6 +2,7 @@ import type { ClientContext, SessionId } from '@deepseek-ai/dsh-client-runtime/c
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { FoldEnd, type FoldEndInjected, FoldStart, type FoldStartInjected } from './components/index.ts'
+import { disposeStyles as disposeFoldToggleStyles } from './components/FoldToggle.module.css'
 import { foldEndDefinition, foldStartDefinition } from './definitions/index.ts'
 import { FoldModelController } from './fold-model-controller.ts'
 import { createFoldStore } from './fold-store.ts'
@@ -25,41 +26,55 @@ export function apply(ctx: ClientContext): void {
   ctx.conversationEvents.register(foldStartDefinition)
   ctx.conversationEvents.register(foldEndDefinition)
   ctx.effect(() => ctx.locale.register(FOLD_TURNS_NAMESPACE, { zh, en }), 'dsh-fold-turns: dictionaries')
+  ctx.effect(() => disposeFoldToggleStyles, 'dsh-fold-turns: client styles')
 
   const foldStore = createFoldStore()
   ctx.slots.inject('conversation.chat.node', () => {
-    const controllers = new Map<SessionId, FoldModelController>()
-    const coordinators = new Map<SessionId, ChatFlowDomCoordinator>()
-    const controllerFor = (sessionId: SessionId): FoldModelController => {
-      let controller = controllers.get(sessionId)
-      if (controller !== undefined) return controller
+    interface SessionResources {
+      readonly controller: FoldModelController
+      readonly coordinator: ChatFlowDomCoordinator
+    }
+    const resources = new Map<SessionId, SessionResources>()
+    const release = (sessionId: SessionId, expected: SessionResources): void => {
+      if (resources.get(sessionId) !== expected) return
+      resources.delete(sessionId)
+      expected.coordinator.dispose()
+      expected.controller.dispose()
+    }
+    const resourcesFor = (sessionId: SessionId): SessionResources => {
+      const existing = resources.get(sessionId)
+      if (existing !== undefined) return existing
       const binding = ctx.sessions.binding(sessionId)
       if (binding === undefined) throw new Error(`dsh-fold-turns cannot resolve session ${String(sessionId)}`)
-      controller = new FoldModelController(binding.session)
-      controllers.set(sessionId, controller)
-      return controller
-    }
-    const coordinatorFor = (sessionId: SessionId): ChatFlowDomCoordinator => {
-      let coordinator = coordinators.get(sessionId)
-      if (coordinator === undefined) {
-        coordinator = new ChatFlowDomCoordinator()
-        coordinators.set(sessionId, coordinator)
+      const created: SessionResources = {
+        controller: new FoldModelController(binding.session),
+        coordinator: new ChatFlowDomCoordinator(),
       }
-      return coordinator
+      resources.set(sessionId, created)
+      try {
+        binding.ctx.effect(
+          () => () => { release(sessionId, created) },
+          'dsh-fold-turns: session resources',
+        )
+      } catch (error) {
+        release(sessionId, created)
+        throw error
+      }
+      return created
     }
     const startInjected = (sessionId: SessionId): FoldStartInjected => {
-      const controller = controllerFor(sessionId)
+      const { controller, coordinator } = resourcesFor(sessionId)
       return {
-        hooks: { foldModel: controller },
-        coordinator: coordinatorFor(sessionId),
+        hooks: { foldModel: controller, foldDom: coordinator },
+        coordinator,
         acknowledgeLateDefault: turn => { controller.acknowledgeLateDefault(turn) },
       }
     }
     const endInjected = (sessionId: SessionId): FoldEndInjected => {
-      const controller = controllerFor(sessionId)
+      const { controller, coordinator } = resourcesFor(sessionId)
       return {
-        hooks: { foldModel: controller },
-        coordinator: coordinatorFor(sessionId),
+        hooks: { foldModel: controller, foldDom: coordinator },
+        coordinator,
         acknowledgeLateDefault: turn => { controller.acknowledgeLateDefault(turn) },
       }
     }
@@ -80,10 +95,7 @@ export function apply(ctx: ClientContext): void {
     return () => {
       disposeEnd()
       disposeStart()
-      for (const coordinator of coordinators.values()) coordinator.dispose()
-      for (const controller of controllers.values()) controller.dispose()
-      coordinators.clear()
-      controllers.clear()
+      for (const [sessionId, current] of [...resources]) release(sessionId, current)
     }
   })
 }

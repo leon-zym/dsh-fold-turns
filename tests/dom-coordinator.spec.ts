@@ -65,7 +65,7 @@ function fixture(includeProcess = true): Fixture {
   const tail = row('tail', 'turn-tail')
   flow.append(user, start)
   if (includeProcess) flow.append(process)
-  flow.append(end, closing, tail)
+  flow.append(closing, end, tail)
   flow.style.rowGap = '16px'
   return { scrollport, flow, start, top, bottom, process, processControl, thinking, finalContent, end, closing }
 }
@@ -102,30 +102,29 @@ describe('ChatFlowDomCoordinator', () => {
     coordinator.dispose()
   })
 
-  it('visually places closing Think before the lower row without reparenting it', () => {
+  it('keeps the expanded visual, DOM, tab, and reading order aligned', () => {
     const view = fixture()
-    const rectangle = (top: number, height: number) => ({
-      top,
-      right: 0,
-      bottom: top + height,
-      left: 0,
-      width: 0,
-      height,
-      x: 0,
-      y: top,
-      toJSON: () => ({}),
-    }) as DOMRect
-    view.end.getBoundingClientRect = () => rectangle(100, 40)
-    view.thinking.getBoundingClientRect = () => rectangle(156, 24)
-
     const coordinator = new ChatFlowDomCoordinator()
     const owner = {}
     coordinator.mountTop(owner, view.top)
     coordinator.updateTop(owner, plan, { expanded: true, loadingOlder: false, presentation: 'initial' })
 
     expect(view.thinking.parentElement).toBe(view.closing)
-    expect(view.thinking.style.transform).toBe('translateY(-56px)')
-    expect(view.end.style.transform).toBe('translateY(40px)')
+    expect(view.closing.nextElementSibling).toBe(view.end)
+    expect(view.thinking.style.transform).toBe('')
+    expect(view.end.style.transform).toBe('')
+    coordinator.dispose()
+  })
+
+  it('publishes blocked capability when a stable turn cannot be mapped', () => {
+    const view = fixture(false)
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('blocked')
     coordinator.dispose()
   })
 
@@ -215,7 +214,7 @@ describe('ChatFlowDomCoordinator', () => {
     bottomCoordinator.dispose()
   })
 
-  it('retries a live completion when React commits the final rows after the top toggle', async () => {
+  it('fails open when the host has no lifecycle observer for a late live commit', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }))
     const originalObserver = window.MutationObserver
     Object.defineProperty(window, 'MutationObserver', { configurable: true, value: undefined })
@@ -228,11 +227,11 @@ describe('ChatFlowDomCoordinator', () => {
       coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'live' })
       expect(view.process.style.display).toBe('')
 
-      view.flow.insertBefore(view.process, view.end)
-      await new Promise(resolve => setTimeout(resolve, 0))
+      view.flow.insertBefore(view.process, view.closing)
 
-      expect(view.process.style.display).toBe('none')
-      expect(view.end.style.display).toBe('none')
+      expect(view.process.style.display).toBe('')
+      expect(view.end.style.display).toBe('')
+      expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('blocked')
       coordinator.dispose()
     } finally {
       Object.defineProperty(window, 'MutationObserver', { configurable: true, value: originalObserver })
@@ -252,6 +251,76 @@ describe('ChatFlowDomCoordinator', () => {
 
     expect(replacement.style.display).toBe('none')
     expect(replacement.getAttribute('data-dsh-fold-hidden')).toBe('')
+    expect(view.process.style.display).toBe('')
+    expect(view.process.getAttribute('data-dsh-fold-hidden')).toBeNull()
+    coordinator.dispose()
+  })
+
+  it('waits across a two-commit replacement after restoring the old mapping', async () => {
+    const view = fixture()
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    view.process.remove()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('checking')
+    expect(view.process.style.display).toBe('')
+    expect(view.end.style.display).toBe('')
+
+    const replacement = row('process', 'tool-call')
+    view.flow.insertBefore(replacement, view.closing)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('available')
+    expect(replacement.style.display).toBe('none')
+    coordinator.dispose()
+  })
+
+  it('waits across a three-stage replacement with an incomplete middle commit', async () => {
+    const view = fixture()
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    view.process.remove()
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('checking')
+
+    const replacement = row('process', 'tool-call')
+    view.thinking.remove()
+    view.flow.insertBefore(replacement, view.closing)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('checking')
+    expect(replacement.style.display).toBe('')
+    expect(view.end.style.display).toBe('')
+
+    view.closing.prepend(view.thinking)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('available')
+    expect(replacement.style.display).toBe('none')
+    expect(view.thinking.style.display).toBe('none')
+    coordinator.dispose()
+  })
+
+  it('reconciles a late nested Think commit from the flow lifecycle observer', async () => {
+    const view = fixture()
+    view.thinking.remove()
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'live' })
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('checking')
+
+    view.closing.prepend(view.thinking)
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('available')
+    expect(view.thinking.style.display).toBe('none')
     coordinator.dispose()
   })
 
@@ -282,6 +351,35 @@ describe('ChatFlowDomCoordinator', () => {
     expect(view.process.style.display).toBe('grid')
   })
 
+  it('does not overwrite a same-value style with a newer priority', () => {
+    const view = fixture()
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    view.process.style.setProperty('display', 'none', 'important')
+    coordinator.dispose()
+
+    expect(view.process.style.getPropertyValue('display')).toBe('none')
+    expect(view.process.style.getPropertyPriority('display')).toBe('important')
+  })
+
+  it('disconnects an unused flow observer when its top row unmounts', () => {
+    const disconnect = vi.spyOn(window.MutationObserver.prototype, 'disconnect')
+    const view = fixture()
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    coordinator.unmountTop(owner)
+
+    expect(disconnect).toHaveBeenCalledOnce()
+    coordinator.dispose()
+    disconnect.mockRestore()
+  })
+
   it('reports a view-level failure when duplicate anchor keys invalidate ownership', () => {
     const view = fixture()
     view.flow.append(row('process', 'tool-call'))
@@ -291,5 +389,54 @@ describe('ChatFlowDomCoordinator', () => {
       scope: 'view',
       reason: 'duplicate-chat-anchor-key',
     })
+  })
+
+  it('blocks the capability and restores native rows on a view-level failure', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const view = fixture()
+    view.flow.append(row('process', 'tool-call'))
+    const coordinator = new ChatFlowDomCoordinator()
+    const owner = {}
+    coordinator.mountTop(owner, view.top)
+
+    coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('blocked')
+    expect(view.process.style.display).toBe('')
+    expect(warning).toHaveBeenCalledOnce()
+    coordinator.dispose()
+    warning.mockRestore()
+  })
+
+  it('blocks later turns without native writes after a view-level disable and releases their capability', () => {
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const observe = vi.spyOn(window.MutationObserver.prototype, 'observe')
+    const invalid = fixture()
+    invalid.flow.append(row('process', 'tool-call'))
+    const coordinator = new ChatFlowDomCoordinator()
+    const invalidOwner = {}
+    coordinator.mountTop(invalidOwner, invalid.top)
+    coordinator.updateTop(invalidOwner, plan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    const next = fixture()
+    const nextOwner = {}
+    const nextPlan = { ...plan, turn: plan.turn + 1 }
+    coordinator.mountTop(nextOwner, next.top)
+    coordinator.updateTop(nextOwner, nextPlan, { expanded: false, loadingOlder: false, presentation: 'initial' })
+
+    expect(coordinator.getSnapshot().byTurn.get(nextPlan.turn)).toBe('blocked')
+    expect(next.process.style.display).toBe('')
+    expect(next.process.getAttribute('data-dsh-fold-hidden')).toBeNull()
+    expect(next.process.getAttribute('aria-hidden')).toBeNull()
+    expect(next.thinking.style.display).toBe('')
+    expect(next.end.style.display).toBe('')
+    expect(observe).not.toHaveBeenCalled()
+
+    coordinator.unmountTop(nextOwner)
+    coordinator.unmountTop(invalidOwner)
+    expect(coordinator.getSnapshot().byTurn.size).toBe(0)
+    coordinator.dispose()
+    observe.mockRestore()
+    warning.mockRestore()
   })
 })

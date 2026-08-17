@@ -28,9 +28,9 @@ describe('fold node Definitions', () => {
     })
   })
 
-  it('anchors fold-end immediately before the host-provided closing assistant', () => {
+  it('anchors fold-end immediately after the host-provided closing assistant', () => {
     const turn = {
-      data: { get: () => ({ closing: { finalNode: { seq: 88 } } }) },
+      data: { get: () => ({ closing: { finalNode: { seq: 88 } }, branchUnavailable: false }) },
     }
     const context = {
       key: 'end-1',
@@ -42,9 +42,28 @@ describe('fold node Definitions', () => {
 
     expect(foldEndDefinition.buildViewNode?.(context)).toMatchObject({
       kind: 'fold-end',
-      anchorSeq: 87.999,
+      anchorSeq: 88.001,
       visibility: 'visible',
       data: { turn: 7 },
+    })
+  })
+
+  it('keeps fold-end hidden when closing.finalNode is structurally incomplete', () => {
+    const turn = {
+      data: { get: () => ({ closing: {}, branchUnavailable: false }) },
+    }
+    const context = {
+      key: 'end-1',
+      id: '7',
+      state: { turn: 7, endSeq: 99 },
+      start: { location: { kind: 'turn', turn } },
+      matches: [],
+    } as unknown as ConversationNodeContext<{ readonly turn: number; readonly endSeq?: number }>
+
+    expect(() => foldEndDefinition.buildViewNode?.(context)).not.toThrow()
+    expect(foldEndDefinition.buildViewNode?.(context)).toMatchObject({
+      anchorSeq: 99,
+      visibility: 'hidden',
     })
   })
 })

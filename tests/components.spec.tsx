@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react'
 import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { FoldToggle, formatDuration } from '../src/client/components/FoldToggle.tsx'
@@ -31,6 +31,93 @@ describe('FoldToggle', () => {
     expect(buttonRef.current).toBe(button)
     fireEvent.click(button)
     expect(onToggle).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an unavailable toggle mounted with stable layout geometry but out of view and accessibility', () => {
+    const onToggle = vi.fn()
+    const buttonRef = createRef<HTMLButtonElement>()
+    const { container, rerender } = render(
+      <FoldToggle
+        buttonRef={buttonRef}
+        durationMs={12_000}
+        expanded={false}
+        position="start"
+        label="Worked for 12s"
+        ariaLabel="Expand turn 2"
+        available={false}
+        reserveSpace
+        onToggle={onToggle}
+      />,
+    )
+
+    expect(within(container).queryByRole('button', { name: 'Expand turn 2' })).toBeNull()
+    const wrapper = container.firstElementChild as HTMLElement
+    expect(wrapper.hasAttribute('hidden')).toBe(false)
+    expect(wrapper.style.visibility).toBe('hidden')
+    expect(wrapper.getAttribute('aria-hidden')).toBe('true')
+    expect(wrapper.dataset.dshFoldLayout).toBe('reserved')
+    expect(buttonRef.current?.disabled).toBe(true)
+    expect(buttonRef.current?.getAttribute('aria-expanded')).toBeNull()
+    fireEvent.click(buttonRef.current as HTMLButtonElement)
+    expect(onToggle).not.toHaveBeenCalled()
+
+    rerender(
+      <FoldToggle
+        buttonRef={buttonRef}
+        durationMs={12_000}
+        expanded={false}
+        position="start"
+        label="Worked for 12s"
+        ariaLabel="Expand turn 2"
+        available
+        onToggle={onToggle}
+      />,
+    )
+    expect(container.firstElementChild).toBe(wrapper)
+    expect(wrapper.style.visibility).toBe('')
+    expect(wrapper.getAttribute('aria-hidden')).toBeNull()
+  })
+
+  it('marks a blocked toggle seat to leave layout without becoming interactive', () => {
+    const onToggle = vi.fn()
+    const buttonRef = createRef<HTMLButtonElement>()
+    const { container, rerender } = render(
+      <FoldToggle
+        buttonRef={buttonRef}
+        durationMs={12_000}
+        expanded={false}
+        position="start"
+        label="Worked for 12s"
+        ariaLabel="Expand turn 2"
+        available={false}
+        reserveSpace
+        onToggle={onToggle}
+      />,
+    )
+
+    const wrapper = container.firstElementChild as HTMLElement
+    expect(wrapper.dataset.dshFoldLayout).toBe('reserved')
+    rerender(
+      <FoldToggle
+        buttonRef={buttonRef}
+        durationMs={12_000}
+        expanded={false}
+        position="start"
+        label="Worked for 12s"
+        ariaLabel="Expand turn 2"
+        available={false}
+        reserveSpace={false}
+        onToggle={onToggle}
+      />,
+    )
+    expect(container.firstElementChild).toBe(wrapper)
+    expect(wrapper.dataset.dshFoldLayout).toBe('none')
+    expect(wrapper.style.visibility).toBe('hidden')
+    expect(wrapper.getAttribute('aria-hidden')).toBe('true')
+    expect(buttonRef.current?.disabled).toBe(true)
+    expect(buttonRef.current?.getAttribute('aria-expanded')).toBeNull()
+    fireEvent.click(buttonRef.current as HTMLButtonElement)
+    expect(onToggle).not.toHaveBeenCalled()
   })
 
   it('keeps the live status passive and refreshes its duration once per second', () => {

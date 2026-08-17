@@ -2,21 +2,18 @@ import {
   createSnapshotStore,
   type ChatConversationViewNode,
   type ChatSnapshot,
-  type ConversationSnapshot,
   type ObservableSnapshot,
   type SessionFace,
   type TurnLocation,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import {
-  type FoldClosingDto,
-  type FoldNodeDto,
-  type FoldTurnDto,
   planRunningTurnFold,
   planTurnFold,
   type RunningTurnFold,
   type TurnFoldPlan,
 } from './fold-core.ts'
+import { projectNode, projectTurn, readTurnTail } from './host/snapshot-projector.ts'
 
 /** How a newly eligible plan should enter the current Chat view. */
 export type FoldPresentation = 'initial' | 'live' | 'late'
@@ -42,8 +39,8 @@ interface TurnRecord {
  *
  * DSH may update a location's turn-tail or closing node data without replacing
  * the top-level Chat order/timeline arrays. These references and primitive
- * summaries let us catch that finalization pass without scanning every node
- * for ordinary streamed text updates.
+ * summaries let us catch the two tail turns' finalization passes without
+ * scanning every historical turn for ordinary streamed text updates.
  */
 interface TurnEvidence {
   readonly status: string
@@ -72,12 +69,15 @@ const EMPTY_MODEL: FoldModel = {
   loadingOlder: false,
 }
 
+/** Current live turn plus its immediately preceding, possibly settling turn. */
+const EVIDENCE_TAIL_SIZE = 2
+
 /**
  * Project one SessionFace into stable, O(1)-addressable fold plans.
  *
- * It avoids scanning Chat nodes while a streamed block changes. The public
- * Chat order and Turn timeline references change only for structural updates,
- * so ordinary content updates return before inspecting a turn's node keys.
+ * It limits same-structure notification checks to two tail turns. The public
+ * Chat order and Turn timeline references still trigger a full structural
+ * recompute when older history or node membership changes.
  */
 export class FoldModelController implements ObservableSnapshot<FoldModel> {
   private readonly store = createSnapshotStore<FoldModel>(EMPTY_MODEL)
@@ -181,28 +181,19 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
     this.running = nextRunning
     this.presentations = nextPresentations
     this.records = nextRecords
-    this.evidence = this.collectEvidence(chat, nextPlans)
+    this.evidence = collectEvidence(chat, nextPlans)
     this.publish(nextPlans, nextPresentations, nextRunning, loadingOlder)
   }
 
   private hasEvidenceChanged(chat: ChatSnapshot): boolean {
-    let count = 0
-    for (const turnNumber of chat.timeline.turnOrder) {
+    const turnNumbers = evidenceTurnNumbers(chat)
+    if (turnNumbers.length !== this.evidence.size) return true
+    for (const turnNumber of turnNumbers) {
       const turn = chat.timeline.turns.get(turnNumber)
-      if (turn === undefined) continue
-      count += 1
+      if (turn === undefined) return true
       if (!sameEvidence(this.evidence.get(turnNumber), evidenceFor(chat, turn, this.plans.get(turnNumber)))) return true
     }
-    return count !== this.evidence.size
-  }
-
-  private collectEvidence(chat: ChatSnapshot, plans: ReadonlyMap<number, TurnFoldPlan>): Map<number, TurnEvidence> {
-    const evidence = new Map<number, TurnEvidence>()
-    for (const turnNumber of chat.timeline.turnOrder) {
-      const turn = chat.timeline.turns.get(turnNumber)
-      if (turn !== undefined) evidence.set(turnNumber, evidenceFor(chat, turn, plans.get(turnNumber)))
-    }
-    return evidence
+    return false
   }
 
   private presentationFor(turn: number, record: TurnRecord, loadingOlder: boolean): FoldPresentation {
@@ -249,7 +240,7 @@ function evidenceFor(chat: ChatSnapshot, turn: TurnLocation, plan: TurnFoldPlan 
   const keys = chat.locations.getTurn(turn.turn)
   const tail = turn.data.get('turn-tail')
   const parsedTail = readTurnTail(tail)
-  const closingKey = plan?.closingKey
+  const closingKey = plan?.closingKey ?? closingKeyFor(chat, keys, parsedTail?.finalSeq)
   const closingNode = closingKey === undefined ? undefined : chat.nodes.get(closingKey)
   const closing = closingNode === undefined ? undefined : projectNode(closingNode)
   return {
@@ -270,6 +261,32 @@ function evidenceFor(chat: ChatSnapshot, turn: TurnLocation, plan: TurnFoldPlan 
   }
 }
 
+function collectEvidence(
+  chat: ChatSnapshot,
+  plans: ReadonlyMap<number, TurnFoldPlan>,
+): Map<number, TurnEvidence> {
+  const evidence = new Map<number, TurnEvidence>()
+  for (const turnNumber of evidenceTurnNumbers(chat)) {
+    const turn = chat.timeline.turns.get(turnNumber)
+    if (turn !== undefined) evidence.set(turnNumber, evidenceFor(chat, turn, plans.get(turnNumber)))
+  }
+  return evidence
+}
+
+function evidenceTurnNumbers(chat: ChatSnapshot): readonly number[] {
+  return chat.timeline.turnOrder.slice(-EVIDENCE_TAIL_SIZE)
+}
+
+function closingKeyFor(chat: ChatSnapshot, keys: readonly string[], finalSeq: number | undefined): string | undefined {
+  if (finalSeq === undefined) return undefined
+  const candidates = keys.filter((key) => {
+    const node = chat.nodes.get(key)
+    if (node === undefined || node.kind !== 'assistant-step') return false
+    return projectNode(node).finalSeq === finalSeq
+  })
+  return candidates.length === 1 ? candidates[0] : undefined
+}
+
 function sameEvidence(left: TurnEvidence | undefined, right: TurnEvidence): boolean {
   return left !== undefined
     && left.status === right.status
@@ -286,85 +303,4 @@ function sameEvidence(left: TurnEvidence | undefined, right: TurnEvidence): bool
     && left.closingData === right.closingData
     && left.closingFinalSeq === right.closingFinalSeq
     && left.closingReasoningCount === right.closingReasoningCount
-}
-
-/** Project only one turn's ordered nodes into FoldCore's host-neutral DTO. */
-export function projectTurn(chat: ChatSnapshot, turn: TurnLocation): FoldTurnDto {
-  const nodes = chat.locations.getTurn(turn.turn).map((key): FoldNodeDto => {
-    const raw = chat.nodes.get(key)
-    return raw === undefined ? {
-      key,
-      kind: '__missing-node__',
-      anchorSeq: Number.NaN,
-    } : projectNode(raw)
-  })
-  const tail = readTurnTail(turn.data.get('turn-tail'))
-  const closing: FoldClosingDto | undefined = tail === undefined ? undefined : {
-    finalSeq: tail.finalSeq,
-    branchUnavailable: tail.branchUnavailable,
-  }
-  return {
-    turn: turn.turn,
-    status: turn.status,
-    ...(turn.start === undefined ? {} : { startTime: turn.start.time }),
-    ...(turn.end === undefined ? {} : { endTime: turn.end.time, endReason: turn.end.data.reason.kind }),
-    nodes,
-    ...(closing === undefined ? {} : { closing }),
-  }
-}
-
-function projectNode(raw: ChatConversationViewNode): FoldNodeDto {
-  const data = raw.data
-  const base: FoldNodeDto = { key: raw.key, kind: raw.kind, anchorSeq: raw.anchorSeq }
-  if (raw.kind === 'fold-start') {
-    const sourceSeq = numberField(data, 'sourceSeq')
-    return sourceSeq === undefined ? base : { ...base, sourceSeq }
-  }
-  if (raw.kind !== 'assistant-step') return base
-  const finalSeq = nestedNumber(data, 'finalNode', 'seq')
-  const blocks = objectField(data, 'blocks')
-  const reasoningCount = Array.isArray(blocks)
-    ? blocks.filter(block => stringField(block, 'kind') === 'reasoning').length
-    : undefined
-  return {
-    ...base,
-    ...(finalSeq === undefined ? {} : { finalSeq }),
-    ...(reasoningCount === undefined ? {} : { reasoningCount }),
-  }
-}
-
-function readTurnTail(value: unknown): { finalSeq: number; branchUnavailable: boolean } | undefined {
-  const closing = objectField(value, 'closing')
-  const finalSeq = nestedNumber(closing, 'finalNode', 'seq')
-  const branchUnavailable = booleanField(value, 'branchUnavailable')
-  if (finalSeq === undefined || branchUnavailable === undefined) return undefined
-  return { finalSeq, branchUnavailable }
-}
-
-function objectField(value: unknown, key: string): Record<string, unknown> | undefined {
-  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) return undefined
-  const candidate = (value as Record<string, unknown>)[key]
-  return typeof candidate === 'object' && candidate !== null ? candidate as Record<string, unknown> : undefined
-}
-
-function numberField(value: unknown, key: string): number | undefined {
-  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) return undefined
-  const candidate = (value as Record<string, unknown>)[key]
-  return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : undefined
-}
-
-function nestedNumber(value: unknown, parent: string, key: string): number | undefined {
-  return numberField(objectField(value, parent), key)
-}
-
-function booleanField(value: unknown, key: string): boolean | undefined {
-  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) return undefined
-  const candidate = (value as Record<string, unknown>)[key]
-  return typeof candidate === 'boolean' ? candidate : undefined
-}
-
-function stringField(value: unknown, key: string): string | undefined {
-  if (typeof value !== 'object' || value === null || !Object.hasOwn(value, key)) return undefined
-  const candidate = (value as Record<string, unknown>)[key]
-  return typeof candidate === 'string' ? candidate : undefined
 }

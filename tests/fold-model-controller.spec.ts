@@ -63,16 +63,16 @@ function openSnapshotFor(turn: number) {
 }
 
 function snapshotFor({ turn, loadingOlder = false, order, timeline, closingBlocks = [{ kind: 'reasoning' }] }: SnapshotInput) {
-  const keys = order ?? [`user-${turn}`, `start-${turn}`, `process-${turn}`, `end-${turn}`, `closing-${turn}`, `tail-${turn}`]
+  const keys = order ?? [`user-${turn}`, `start-${turn}`, `process-${turn}`, `closing-${turn}`, `end-${turn}`, `tail-${turn}`]
   const nodes = new Map<string, ChatConversationViewNode>([
     [keys[0] as string, node(keys[0] as string, 'user', 1)],
     [keys[1] as string, node(keys[1] as string, 'fold-start', 1.001, { sourceSeq: 1 })],
     [keys[2] as string, node(keys[2] as string, 'assistant-step', 2)],
-    [keys[3] as string, node(keys[3] as string, 'fold-end', 2.999)],
-    [keys[4] as string, node(keys[4] as string, 'assistant-step', 3, {
+    [keys[3] as string, node(keys[3] as string, 'assistant-step', 3, {
       finalNode: { seq: 3 },
       blocks: closingBlocks,
     })],
+    [keys[4] as string, node(keys[4] as string, 'fold-end', 3.001)],
     [keys[5] as string, node(keys[5] as string, 'turn-tail', 3.1)],
   ])
   const tailData = { closing: { finalNode: { seq: 3 } }, branchUnavailable: false }
@@ -157,6 +157,73 @@ describe('FoldModelController', () => {
     controller.dispose()
   })
 
+  it('recomputes when an initially incomplete closing node is filled in place', () => {
+    const initial = snapshotFor({ turn: 1 })
+    const closing = initial.chat.nodes.get('closing-1') as ChatConversationViewNode
+    const mutableData = closing.data as { finalNode?: { seq: number }; blocks: readonly unknown[] }
+    delete mutableData.finalNode
+    const session = new FakeSession(initial)
+    const controller = new FoldModelController(session as unknown as SessionFace)
+
+    expect(controller.getSnapshot().plans.get(1)).toMatchObject({
+      eligible: false,
+      reason: 'missing-closing-node',
+    })
+    const firstCount = controller.recomputeCount
+    mutableData.finalNode = { seq: 3 }
+    session.emit(initial)
+
+    expect(controller.recomputeCount).toBe(firstCount + 1)
+    expect(controller.getSnapshot().byStartKey.get('start-1')?.eligible).toBe(true)
+    controller.dispose()
+  })
+
+  it('keeps checking the preceding turn while a newer turn is already present', () => {
+    const initial = snapshotForMany(2)
+    const closing = initial.chat.nodes.get('closing-1') as ChatConversationViewNode
+    const mutableData = closing.data as { finalNode?: { seq: number }; blocks: readonly unknown[] }
+    delete mutableData.finalNode
+    const session = new FakeSession(initial)
+    const controller = new FoldModelController(session as unknown as SessionFace)
+
+    expect(controller.getSnapshot().plans.get(1)?.eligible).toBe(false)
+    const firstCount = controller.recomputeCount
+    mutableData.finalNode = { seq: 3 }
+    session.emit(initial)
+
+    expect(controller.recomputeCount).toBe(firstCount + 1)
+    expect(controller.getSnapshot().plans.get(1)?.eligible).toBe(true)
+    controller.dispose()
+  })
+
+  it('fails open for malformed turn-end payloads instead of throwing', () => {
+    const initial = snapshotFor({ turn: 1 })
+    const turn = initial.chat.timeline.turns.get(1) as TurnLocation
+    Object.defineProperty(turn, 'end', {
+      configurable: true,
+      value: { time: 2_000, data: {} },
+    })
+
+    let controller: FoldModelController | undefined
+    expect(() => {
+      controller = new FoldModelController(new FakeSession(initial) as unknown as SessionFace)
+    }).not.toThrow()
+    expect(controller?.getSnapshot().plans.get(1)?.eligible).toBe(false)
+    controller?.dispose()
+  })
+
+  it('checks only a bounded tail window on a content-only notification', () => {
+    const initial = snapshotForMany(40)
+    const session = new FakeSession(initial)
+    const controller = new FoldModelController(session as unknown as SessionFace)
+    initial.getTurnCalls.value = 0
+
+    session.emit(initial)
+
+    expect(initial.getTurnCalls.value).toBeLessThanOrEqual(2)
+    controller.dispose()
+  })
+
   it('shows an open turn immediately, then freezes its exact duration when completed', () => {
     const session = new FakeSession(openSnapshotFor(1))
     const controller = new FoldModelController(session as unknown as SessionFace)
@@ -176,3 +243,40 @@ describe('FoldModelController', () => {
     controller.dispose()
   })
 })
+
+function snapshotForMany(count: number) {
+  const snapshots = Array.from({ length: count }, (_, index) => snapshotFor({ turn: index + 1 }))
+  const nodes = new Map<string, ChatConversationViewNode>()
+  const keysByTurn = new Map<number, readonly string[]>()
+  const turns = new Map<number, TurnLocation>()
+  const order: string[] = []
+  for (const snapshot of snapshots) {
+    const turn = snapshot.chat.timeline.turnOrder[0] as number
+    const keys = snapshot.chat.order
+    keysByTurn.set(turn, keys)
+    turns.set(turn, snapshot.chat.timeline.turns.get(turn) as TurnLocation)
+    order.push(...keys)
+    for (const key of keys) {
+      const value = snapshot.chat.nodes.get(key)
+      if (value !== undefined) nodes.set(key, value)
+    }
+  }
+  const getTurnCalls = { value: 0 }
+  const chat = {
+    order,
+    nodes: {
+      get: (key: string) => nodes.get(key),
+      values: () => [...nodes.values()],
+    },
+    locations: {
+      getTurn: (turn: number) => {
+        getTurnCalls.value += 1
+        return keysByTurn.get(turn) ?? []
+      },
+      getStep: () => [],
+    },
+    timeline: { turnOrder: [...turns.keys()], turns },
+    legacy: {},
+  } as unknown as ChatSnapshot
+  return { chat, openState: 'open', loadingOlder: false, getTurnCalls }
+}

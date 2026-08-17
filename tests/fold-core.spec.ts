@@ -9,8 +9,8 @@ function completeTurn(overrides: Partial<FoldTurnDto> = {}): FoldTurnDto {
     { key: 'assistant-process', kind: 'assistant-step', anchorSeq: 3 },
     { key: 'tool', kind: 'tool-call', anchorSeq: 4 },
     { key: 'steering', kind: 'steering', anchorSeq: 5 },
-    { key: 'fold-end', kind: 'fold-end', anchorSeq: 9.999 },
     { key: 'closing', kind: 'assistant-step', anchorSeq: 10, finalSeq: 10, reasoningCount: 1 },
+    { key: 'fold-end', kind: 'fold-end', anchorSeq: 10.001 },
     { key: 'tail', kind: 'turn-tail', anchorSeq: 10.1 },
   ]
   return {
@@ -79,6 +79,20 @@ describe('planTurnFold', () => {
 
     expect(plan).toMatchObject({ eligible: true, startInputKey: 'user', startCandidateKey: 'fold-start' })
     expect(plan.hiddenKeys).not.toContain('tool-before-final-user')
+  })
+
+  it('fails open instead of falling back to an earlier user whose start candidate exists', () => {
+    const original = completeTurn()
+    const nodes = [
+      { key: 'user-early', kind: 'user', anchorSeq: 0.5 },
+      { key: 'fold-start-early', kind: 'fold-start', anchorSeq: 0.501, sourceSeq: 0.5 },
+      ...original.nodes,
+    ].filter(node => node.key !== 'fold-start') satisfies readonly FoldNodeDto[]
+
+    expect(planTurnFold({ ...original, nodes })).toMatchObject({
+      eligible: false,
+      reason: 'missing-fold-start',
+    })
   })
 
   it('fails the complete turn open when a visible node kind is not classified', () => {

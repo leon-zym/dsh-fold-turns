@@ -53,15 +53,15 @@ export function probeChatFlow(button: HTMLButtonElement, plan: TurnFoldPlan): Ch
   const startAt = indexOf(flow, rows.get(plan.startCandidateKey))
   const endAt = indexOf(flow, rows.get(plan.endToggleKey))
   const closingAt = indexOf(flow, rows.get(plan.closingKey))
-  if (inputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(inputAt < startAt && startAt < endAt && endAt < closingAt)) {
+  if (inputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(inputAt < startAt && startAt < closingAt && closingAt < endAt)) {
     return { ok: false, scope: 'turn', reason: 'invalid-target-order' }
   }
   if (plan.hiddenKeys.some(key => {
     const index = indexOf(flow, rows.get(key))
-    return index <= startAt || index >= endAt
+    return index <= startAt || index >= closingAt
   })) return { ok: false, scope: 'turn', reason: 'hidden-row-outside-toggle-range' }
-  if (plan.tailKey !== undefined && indexOf(flow, rows.get(plan.tailKey)) <= closingAt) {
-    return { ok: false, scope: 'turn', reason: 'turn-tail-before-closing' }
+  if (plan.tailKey !== undefined && indexOf(flow, rows.get(plan.tailKey)) <= endAt) {
+    return { ok: false, scope: 'turn', reason: 'turn-tail-before-fold-end' }
   }
   return { ok: true, value: { flow, rows } }
 }

@@ -147,7 +147,7 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
   const startAt = nodeIndex(turn.nodes, startCandidate.key)
   const endAt = nodeIndex(turn.nodes, endCandidate.key)
   const closingAt = nodeIndex(turn.nodes, closingNode.key)
-  if (startInputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(startInputAt < startAt && startAt < endAt && endAt < closingAt)) {
+  if (startInputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(startInputAt < startAt && startAt < closingAt && closingAt < endAt)) {
     return fail(turn.turn, 'invalid-order')
   }
 
@@ -173,17 +173,17 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
       continue
     }
     if (node.kind === 'turn-tail') {
-      if (index <= closingAt) return fail(turn.turn, 'invalid-order')
+      if (index <= endAt) return fail(turn.turn, 'invalid-order')
       dispositions.set(node.key, 'tail')
       continue
     }
 
     const disposition = classifyNode(node.kind, index, startInputAt, closingAt)
     if (disposition === 'invalid') return fail(turn.turn, 'unknown-node-kind')
-    if (disposition === 'hidden' && !(index > startAt && index < endAt)) {
+    if (disposition === 'hidden' && !(index > startAt && index < closingAt)) {
       return fail(turn.turn, 'process-outside-boundary')
     }
-    if (disposition === 'visible' && index > endAt && index < closingAt) {
+    if (disposition === 'visible' && index > closingAt && index < endAt) {
       return fail(turn.turn, 'invalid-order')
     }
     dispositions.set(node.key, disposition)
@@ -239,17 +239,19 @@ type HumanStartResult = { readonly input: FoldNodeDto; readonly candidate: FoldN
 function latestHumanStart(nodes: readonly FoldNodeDto[]): HumanStartResult {
   const humanInputs = nodes.filter(node => (node.kind === 'user' || node.kind === 'steering') && finite(node.anchorSeq))
   if (humanInputs.length === 0) return 'missing-human-input'
-  const startsFor = (kind: 'user' | 'steering') => humanInputs
-    .filter(input => input.kind === kind)
-    .map(input => ({ input, candidates: nodes.filter(node => node.kind === 'fold-start' && node.sourceSeq === input.anchorSeq) }))
-    .filter(({ candidates }) => candidates.length > 0)
-    .sort((left, right) => left.input.anchorSeq - right.input.anchorSeq)
-  const latest = startsFor('user').at(-1) ?? startsFor('steering').at(-1)
-  if (latest === undefined) return 'missing-fold-start'
-  if (latest.candidates.length !== 1) return 'ambiguous-fold-start'
-  const candidate = latest.candidates[0]
+  const latestOf = (inputs: readonly FoldNodeDto[]) => [...inputs]
+    .sort((left, right) => left.anchorSeq - right.anchorSeq)
+    .at(-1)
+  const users = humanInputs.filter(input => input.kind === 'user')
+  const input = latestOf(users) ?? latestOf(humanInputs.filter(candidate => candidate.kind === 'steering'
+    && nodes.some(node => node.kind === 'fold-start' && node.sourceSeq === candidate.anchorSeq)))
+  if (input === undefined) return 'missing-human-input'
+  const candidates = nodes.filter(node => node.kind === 'fold-start' && node.sourceSeq === input.anchorSeq)
+  if (candidates.length === 0) return 'missing-fold-start'
+  if (candidates.length !== 1) return 'ambiguous-fold-start'
+  const candidate = candidates[0]
   if (candidate === undefined) return 'missing-fold-start'
-  return { input: latest.input, candidate }
+  return { input, candidate }
 }
 
 function knownBeforeStart(kind: string): boolean {

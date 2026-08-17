@@ -3,6 +3,17 @@
   min-width: 0;
 }
 
+/* Slot dispatch keeps an internal wrapper even when a keyed renderer returns
+   null, so the host seat is not structurally :empty. Suppress those zero-box
+   flex items (and permanently blocked controls) before they contribute a
+   column gap; a checking toggle remains present and reserves its full row. */
+:global([data-chat-flow-kind='fold-start']:not(:has([data-dsh-fold-toggle]))),
+:global([data-chat-flow-kind='fold-end']:not(:has([data-dsh-fold-toggle]))),
+:global([data-chat-flow-kind='fold-start']:has([data-dsh-fold-layout='none'])),
+:global([data-chat-flow-kind='fold-end']:has([data-dsh-fold-layout='none'])) {
+  display: none;
+}
+
 .button {
   display: flex;
   width: 100%;

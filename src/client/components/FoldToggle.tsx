@@ -24,6 +24,8 @@ export function FoldToggle({
   label,
   ariaLabel,
   interactive = true,
+  available = true,
+  reserveSpace = true,
   onToggle,
 }: {
   readonly buttonRef: Ref<HTMLButtonElement>
@@ -33,19 +35,30 @@ export function FoldToggle({
   readonly label: string
   readonly ariaLabel: string
   readonly interactive?: boolean
+  /** Keep the probe anchor mounted while withholding an unsafe control. */
+  readonly available?: boolean
+  /** Preserve the seat while the host contract is still being checked. */
+  readonly reserveSpace?: boolean
   readonly onToggle: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
+  const usable = interactive && available
   return (
-    <div className={css.root} data-dsh-fold-toggle={position}>
+    <div
+      className={css.root}
+      data-dsh-fold-toggle={position}
+      data-dsh-fold-layout={available ? 'normal' : reserveSpace ? 'reserved' : 'none'}
+      aria-hidden={available ? undefined : true}
+      style={{ visibility: available ? undefined : 'hidden' }}
+    >
       <button
         ref={buttonRef}
         type="button"
         className={css.button}
-        aria-expanded={interactive ? expanded : undefined}
+        aria-expanded={usable ? expanded : undefined}
         aria-label={ariaLabel}
         data-dsh-fold-toggle-button={position}
-        disabled={!interactive}
-        onClick={onToggle}
+        disabled={!usable}
+        onClick={usable ? onToggle : undefined}
       >
         <span className={css.label}>{label}</span>
         {interactive ? <IconChevronDownOutline14 className={css.chevron} /> : null}
