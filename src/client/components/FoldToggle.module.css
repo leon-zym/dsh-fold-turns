@@ -1,0 +1,84 @@
+.root {
+  width: 100%;
+  min-width: 0;
+}
+
+.button {
+  display: flex;
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  touch-action: manipulation;
+  transition-property: color, scale;
+  transition-duration: 120ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.button::before,
+.button::after {
+  height: 1px;
+  flex: 1 1 auto;
+  content: '';
+  background: var(--dsw-alias-border-l2);
+}
+
+.button::before {
+  min-width: 16px;
+}
+
+.button::after {
+  min-width: 8px;
+}
+
+.label {
+  min-width: max-content;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.chevron {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-caption);
+  transition-property: transform;
+  transition-duration: 160ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.button[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+
+.button:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
+.button:active {
+  scale: 0.98;
+}
+
+@media (hover: hover) {
+  .button:hover {
+    color: var(--dsw-alias-label-secondary);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .chevron {
+    transition: none;
+  }
+}
