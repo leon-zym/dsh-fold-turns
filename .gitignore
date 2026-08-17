@@ -1,1 +1,12 @@
+# Operating system files
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Build and package artifacts
+lib/
+*.tgz
+
+# Local documentation notes
 /docs/notes/
