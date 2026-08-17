@@ -1,7 +1,8 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, renderHook, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { FoldToggle, formatDuration } from '../src/client/components/FoldToggle.tsx'
+import { useElapsedDuration } from '../src/client/components/FoldStart.tsx'
 
 describe('FoldToggle', () => {
   it('formats exact durations without consulting the wall clock', () => {
@@ -30,5 +31,42 @@ describe('FoldToggle', () => {
     expect(buttonRef.current).toBe(button)
     fireEvent.click(button)
     expect(onToggle).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the live status passive and refreshes its duration once per second', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(1_000))
+    const { result, rerender, unmount } = renderHook(
+      ({ startedAt }: { readonly startedAt: number | undefined }) => useElapsedDuration(startedAt),
+      { initialProps: { startedAt: 1_000 } },
+    )
+    expect(result.current).toBe(0)
+
+    act(() => { vi.advanceTimersByTime(1_000) })
+    expect(result.current).toBe(1_000)
+    rerender({ startedAt: undefined })
+    expect(result.current).toBe(0)
+    expect(vi.getTimerCount()).toBe(0)
+    unmount()
+    vi.useRealTimers()
+
+    const onToggle = vi.fn()
+    render(
+      <FoldToggle
+        buttonRef={createRef<HTMLButtonElement>()}
+        durationMs={1_000}
+        expanded={false}
+        position="start"
+        label="Running for 1s"
+        ariaLabel="Running for 1s"
+        interactive={false}
+        onToggle={onToggle}
+      />,
+    )
+    const button = screen.getByRole('button', { name: 'Running for 1s' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+    expect(button.getAttribute('aria-expanded')).toBeNull()
+    fireEvent.click(button)
+    expect(onToggle).not.toHaveBeenCalled()
   })
 })

@@ -23,6 +23,7 @@ export function FoldToggle({
   position,
   label,
   ariaLabel,
+  interactive = true,
   onToggle,
 }: {
   readonly buttonRef: Ref<HTMLButtonElement>
@@ -31,6 +32,7 @@ export function FoldToggle({
   readonly position: 'start' | 'end'
   readonly label: string
   readonly ariaLabel: string
+  readonly interactive?: boolean
   readonly onToggle: (event: MouseEvent<HTMLButtonElement>) => void
 }) {
   return (
@@ -39,13 +41,14 @@ export function FoldToggle({
         ref={buttonRef}
         type="button"
         className={css.button}
-        aria-expanded={expanded}
+        aria-expanded={interactive ? expanded : undefined}
         aria-label={ariaLabel}
         data-dsh-fold-toggle-button={position}
+        disabled={!interactive}
         onClick={onToggle}
       >
         <span className={css.label}>{label}</span>
-        <IconChevronDownOutline14 className={css.chevron} />
+        {interactive ? <IconChevronDownOutline14 className={css.chevron} /> : null}
       </button>
     </div>
   )

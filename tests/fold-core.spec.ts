@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planTurnFold, type FoldNodeDto, type FoldTurnDto } from '../src/client/fold-core.ts'
+import { planRunningTurnFold, planTurnFold, type FoldNodeDto, type FoldTurnDto } from '../src/client/fold-core.ts'
 
 function completeTurn(overrides: Partial<FoldTurnDto> = {}): FoldTurnDto {
   const nodes: readonly FoldNodeDto[] = [
@@ -26,12 +26,12 @@ function completeTurn(overrides: Partial<FoldTurnDto> = {}): FoldTurnDto {
 }
 
 describe('planTurnFold', () => {
-  it('folds only classified process rows after the final ordinary user', () => {
+  it('folds only classified process rows after the normal user boundary', () => {
     const plan = planTurnFold(completeTurn())
 
     expect(plan).toMatchObject({
       eligible: true,
-      startUserKey: 'user',
+      startInputKey: 'user',
       startCandidateKey: 'fold-start',
       endToggleKey: 'fold-end',
       closingKey: 'closing',
@@ -68,7 +68,7 @@ describe('planTurnFold', () => {
     })
   })
 
-  it('uses the last ordinary user and preserves everything before it', () => {
+  it('uses the latest normal user boundary and preserves everything before it', () => {
     const earlier = [
       { key: 'user-early', kind: 'user', anchorSeq: 0.5 },
       { key: 'fold-start-early', kind: 'fold-start', anchorSeq: 0.501, sourceSeq: 0.5 },
@@ -77,7 +77,7 @@ describe('planTurnFold', () => {
     const original = completeTurn()
     const plan = planTurnFold({ ...original, nodes: [...earlier, ...original.nodes] })
 
-    expect(plan).toMatchObject({ eligible: true, startUserKey: 'user', startCandidateKey: 'fold-start' })
+    expect(plan).toMatchObject({ eligible: true, startInputKey: 'user', startCandidateKey: 'fold-start' })
     expect(plan.hiddenKeys).not.toContain('tool-before-final-user')
   })
 
@@ -92,7 +92,18 @@ describe('planTurnFold', () => {
     })
   })
 
-  it('keeps a think-only completed turn eligible but suppresses empty controls', () => {
+  it('falls back to a claimed next-step steering message when no normal user is present', () => {
+    const original = completeTurn()
+    const nodes = original.nodes.map(node => node.key === 'user' ? { ...node, kind: 'steering' } : node)
+
+    expect(planTurnFold({ ...original, nodes })).toMatchObject({
+      eligible: true,
+      startInputKey: 'user',
+      startCandidateKey: 'fold-start',
+    })
+  })
+
+  it('keeps a think-only completed turn eligible but omits controls with no process or Think content', () => {
     const original = completeTurn()
     const thinkOnlyNodes = original.nodes.filter(node => node.key !== 'assistant-process' && node.key !== 'tool')
     expect(planTurnFold({ ...original, nodes: thinkOnlyNodes }).eligible).toBe(true)
@@ -102,5 +113,20 @@ describe('planTurnFold', () => {
       eligible: false,
       reason: 'no-collapsible-content',
     })
+  })
+
+  it('exposes a running status only after an open human input receives its start candidate', () => {
+    const original = completeTurn()
+    const runningNodes = original.nodes.slice(0, 4)
+    const running = planRunningTurnFold({
+      ...original,
+      status: 'open',
+      endTime: undefined,
+      endReason: undefined,
+      closing: undefined,
+      nodes: runningNodes,
+    })
+
+    expect(running).toEqual({ turn: 7, startCandidateKey: 'fold-start', startedAt: 1_000 })
   })
 })

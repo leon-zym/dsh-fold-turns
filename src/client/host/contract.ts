@@ -15,6 +15,6 @@ export interface FoldDomCoordinator {
   unmountTop(owner: object): void
   mountBottom(owner: object, turn: number, button: HTMLButtonElement): void
   unmountBottom(owner: object): void
-  requestToggle(turn: number, expanded: boolean, trigger: HTMLButtonElement, animate: boolean): void
+  requestToggle(turn: number, expanded: boolean, trigger: HTMLButtonElement): void
   dispose(): void
 }

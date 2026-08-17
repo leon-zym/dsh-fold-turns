@@ -35,7 +35,7 @@ export function probeChatFlow(button: HTMLButtonElement, plan: TurnFoldPlan): Ch
     rows.set(key, child)
   }
   const required = [
-    plan.startUserKey,
+    plan.startInputKey,
     plan.startCandidateKey,
     ...plan.hiddenKeys,
     plan.endToggleKey,
@@ -45,15 +45,15 @@ export function probeChatFlow(button: HTMLButtonElement, plan: TurnFoldPlan): Ch
   if (required.some(key => !rows.has(key))) return { ok: false, scope: 'turn', reason: 'missing-target-row' }
   const uniqueRequired = new Set(required)
   if (uniqueRequired.size !== required.length) return { ok: false, scope: 'turn', reason: 'duplicate-plan-key' }
-  if (plan.startUserKey === undefined || plan.startCandidateKey === undefined
+  if (plan.startInputKey === undefined || plan.startCandidateKey === undefined
     || plan.endToggleKey === undefined || plan.closingKey === undefined) {
     return { ok: false, scope: 'turn', reason: 'incomplete-plan' }
   }
-  const userAt = indexOf(flow, rows.get(plan.startUserKey))
+  const inputAt = indexOf(flow, rows.get(plan.startInputKey))
   const startAt = indexOf(flow, rows.get(plan.startCandidateKey))
   const endAt = indexOf(flow, rows.get(plan.endToggleKey))
   const closingAt = indexOf(flow, rows.get(plan.closingKey))
-  if (userAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(userAt < startAt && startAt < endAt && endAt < closingAt)) {
+  if (inputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(inputAt < startAt && startAt < endAt && endAt < closingAt)) {
     return { ok: false, scope: 'turn', reason: 'invalid-target-order' }
   }
   if (plan.hiddenKeys.some(key => {

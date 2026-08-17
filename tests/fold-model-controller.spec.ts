@@ -10,12 +10,14 @@ type SnapshotInput = {
   readonly closingBlocks?: readonly unknown[]
 }
 
+type FakeSnapshot = ReturnType<typeof snapshotFor> | ReturnType<typeof openSnapshotFor>
+
 class FakeSession {
   private readonly listeners = new Set<() => void>()
 
-  constructor(private snapshot: ReturnType<typeof snapshotFor>) {}
+  constructor(private snapshot: FakeSnapshot) {}
 
-  getSnapshot(): ReturnType<typeof snapshotFor> {
+  getSnapshot(): FakeSnapshot {
     return this.snapshot
   }
 
@@ -24,10 +26,40 @@ class FakeSession {
     return () => { this.listeners.delete(listener) }
   }
 
-  emit(next: ReturnType<typeof snapshotFor>): void {
+  emit(next: FakeSnapshot): void {
     this.snapshot = next
     for (const listener of this.listeners) listener()
   }
+}
+
+function openSnapshotFor(turn: number) {
+  const keys = [`user-${turn}`, `start-${turn}`, `process-${turn}`]
+  const nodes = new Map<string, ChatConversationViewNode>([
+    [keys[0] as string, node(keys[0] as string, 'user', 1)],
+    [keys[1] as string, node(keys[1] as string, 'fold-start', 1.001, { sourceSeq: 1 })],
+    [keys[2] as string, node(keys[2] as string, 'assistant-step', 2)],
+  ])
+  const turnLocation = {
+    turn,
+    status: 'open',
+    start: { time: 1_000 },
+    end: undefined,
+    data: { get: () => undefined },
+  } as unknown as TurnLocation
+  const chat = {
+    order: keys,
+    nodes: {
+      get: (key: string) => nodes.get(key),
+      values: () => [...nodes.values()],
+    },
+    locations: {
+      getTurn: (candidate: number) => candidate === turn ? keys : [],
+      getStep: () => [],
+    },
+    timeline: { turnOrder: [turn], turns: new Map([[turn, turnLocation]]) },
+    legacy: {},
+  } as unknown as ChatSnapshot
+  return { chat, openState: 'open', loadingOlder: false }
 }
 
 function snapshotFor({ turn, loadingOlder = false, order, timeline, closingBlocks = [{ kind: 'reasoning' }] }: SnapshotInput) {
@@ -122,6 +154,25 @@ describe('FoldModelController', () => {
 
     expect(controller.recomputeCount).toBe(firstCount + 1)
     expect(controller.getSnapshot().byStartKey.get('start-1')?.closingReasoningCount).toBe(0)
+    controller.dispose()
+  })
+
+  it('shows an open turn immediately, then freezes its exact duration when completed', () => {
+    const session = new FakeSession(openSnapshotFor(1))
+    const controller = new FoldModelController(session as unknown as SessionFace)
+
+    expect(controller.getSnapshot().runningByStartKey.get('start-1')).toEqual({
+      turn: 1,
+      startCandidateKey: 'start-1',
+      startedAt: 1_000,
+    })
+    expect(controller.getSnapshot().byStartKey.get('start-1')).toBeUndefined()
+
+    session.emit(snapshotFor({ turn: 1 }))
+
+    expect(controller.getSnapshot().runningByStartKey.get('start-1')).toBeUndefined()
+    expect(controller.getSnapshot().presentationByTurn.get(1)).toBe('live')
+    expect(controller.getSnapshot().byStartKey.get('start-1')?.durationMs).toBe(1_000)
     controller.dispose()
   })
 })

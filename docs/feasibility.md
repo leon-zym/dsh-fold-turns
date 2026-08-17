@@ -8,21 +8,21 @@
 
 `dsh-fold-turns` 可以作为独立外部插件开发，通过 `dsh plugin add` 安装，不需要修改 deepseek-harness 上游代码。
 
-在“不改上游、必须作用于原生 Chat”的约束下，推荐方案仍是：用 Conversation Definition 和 `conversation.chat.node` 添加上下两条 toggle，原生 Chat 行保持原有父子关系，插件按精确 node key 控制过程行的显示、动画和滚动。
+在“不改上游、必须作用于原生 Chat”的约束下，推荐方案仍是：用 Conversation Definition 和 `conversation.chat.node` 添加上下两条 toggle，原生 Chat 行保持原有父子关系，插件按精确 node key 控制过程行的显示、稳定收缩和滚动。
 
 DOM wrapper 会移动 React 管理的行；renderer shadow 会复制原生 renderer 及其子插槽契约，并在折叠时卸载原生组件；覆盖 ChatView 则要重新实现分页、pending steering、滚动恢复和底部跟随。三条路线的维护成本和运行风险都高于当前混合方案。
 
 插件不按 DSH 版本号决定是否启用。当前源码实现是第一个开发和验证基线，运行时由能力探针确认公共服务、快照和 DOM 契约。未来 DSH 发生 breaking change 时，只调整宿主适配层；稳定的折叠规则、交互状态和组件不随宿主结构一起改写。
 
-方案可以开始实施，但不能把动画和滚动的静态推导当成已验证结果。独立 bundle 启动、closing assistant 内 Think 的可逆隐藏、首帧无闪烁、历史阅读位置和分页并发属于发布门禁。任一门禁无法稳定通过时，插件保持原生展示，不发布不完整的折叠行为。
+方案可以开始实施，但不能把稳定收缩和滚动的静态推导当成已验证结果。独立 bundle 启动、closing assistant 内 Think 的可逆隐藏、首帧无闪烁、历史阅读位置和分页并发属于发布门禁。任一门禁无法稳定通过时，插件保持原生展示，不发布不完整的折叠行为。
 
 ## 目标行为
 
-流式输出期间保持原生展示。turn 以 `completed` 原因结束且结构完整后，默认自动折叠：
+流式输出期间保持原生展示。只要 `fold-start` 已能与当前 open turn 的人类输入匹配，用户消息之后立即显示不可交互的“执行中”状态栏，耗时每秒更新。turn 以 `completed` 原因结束且结构完整后，状态栏冻结为精确耗时并默认自动折叠：
 
 ```text
 用户消息
-Worked for 2m 03s
+执行用时 2m 03s
 最后一条 assistant 消息
 ```
 
@@ -31,9 +31,9 @@ Worked for 2m 03s
 ```text
 用户消息
 顶部 toggle
-所有原生过程
+所有原生过程与 closing assistant 的 Think
 底部 toggle
-最后一条 assistant 消息
+closing assistant 的非 Think 正文
 ```
 
 图示省略宿主已有的 turn-tail 操作行。它继续由宿主渲染并保持可见，插件不复制其中的消息操作、分支操作或扩展插槽。
@@ -108,13 +108,13 @@ Cordis 根据这组服务依赖等待插件激活。报告和实现中必须区�
 
 折叠计划只使用快照中的节点归属和顺序。DOM 负责把已算出的 key 映射到对应行，不能依靠 sibling 位置反推 turn。
 
-### 折叠起点是最后一个普通 user 节点
+### 折叠起点优先最后一个普通 user 节点
 
 同一个 turn 中可能存在锚定在普通 user 消息之前的 context 注入。这些节点属于 turn，但不在“用户消息与最终回复之间”，不能被折叠，也不能作为顶部 toggle 的锚点。
 
-插件从该 turn 的节点中找到 `kind === "user"` 且 `anchorSeq` 最大的节点，把它作为折叠起点。只有排序在它之后、closing assistant 之前的已分类过程节点进入隐藏集合。`steering` 不参与普通 user 起点计算，并且始终原位可见。
+插件优先从该 turn 的节点中找到带匹配 `fold-start` 的、`kind === "user"` 且 `anchorSeq` 最大的节点，把它作为折叠起点。只有排序在它之后、closing assistant 之前的已分类过程节点进入隐藏集合。若上游把该 turn 的唯一人类输入归类为 `steering`，则使用最后一个带匹配候选的 `steering` 作为回退边界；其他 `steering` 始终原位可见。
 
-当前窗口没有加载普通 user 节点时，turn 保持原生展开。无 user 的宿主主动 turn 不与普通对话共用推断逻辑，后续若要支持，应增加明确的产品规则和单独测试。
+当前窗口没有可匹配的普通 user 或 steering 候选时，turn 保持原生展开。无用户输入的宿主主动 turn 不与普通对话共用推断逻辑，后续若要支持，应增加明确的产品规则和单独测试。
 
 ### closing assistant
 
@@ -139,7 +139,7 @@ closing assistant 的一个原生 Chat 行可以同时包含 reasoning 和正文
 | `FoldCore` | 把归一化 turn/node DTO 计算为 `TurnFoldPlan` | 纯函数 |
 | `FoldModelController` | 订阅公开的 `SessionFace`，在结构变化时生成每个 turn 的计划 | 每个 session |
 | `FoldStateStore` | 保存用户显式展开的 turn | slot framework 按 session 管理 |
-| `DshHostAdapter` | 注册 Definition、投影快照、探测 DOM、执行隐藏、动画、滚动和清理 | 插件和当前 view |
+| `DshHostAdapter` | 注册 Definition、投影快照、探测 DOM、执行隐藏、稳定收缩、滚动和清理 | 插件和当前 view |
 
 ### FoldCore 只处理折叠语义
 
@@ -191,13 +191,13 @@ defineStore({
 
 store 不声明 `persist`。同一个 handle 传给 `fold-start` 和 `fold-end` 两个 session-scoped registration 后，框架为每个 session 创建一份实例，并在两个 entry 间共享。
 
-默认没有记录，表示 eligible turn 折叠；对象中存在 turn key，表示用户显式展开。新 turn 和其他 turn 的状态变化不会改写已有记录。store 只保存 JSON 形态的交互状态，不保存 DOM 元素、动画句柄、兼容探针或 session 业务快照。
+默认没有记录，表示 eligible turn 折叠；对象中存在 turn key，表示用户显式展开。新 turn 和其他 turn 的状态变化不会改写已有记录。store 只保存 JSON 形态的交互状态，不保存 DOM 元素、兼容探针或 session 业务快照。
 
 ### toggle 由两个 Conversation Node 提供
 
 插件注册两个 Chat 节点类型：
 
-- `fold-start` 位于最后一个普通 user 消息之后，eligible turn 在折叠和展开时都显示。
+- `fold-start` 位于匹配的人类输入之后，eligible turn 在折叠和展开时都显示。
 - `fold-end` 位于 closing assistant 之前，只在展开时显示。
 
 两个节点都通过 `conversation.chat.node` 注册 React renderer，不向 Chat 列表手工插入 DOM 兄弟节点。
@@ -206,7 +206,7 @@ store 不声明 `persist`。同一个 handle 传给 `fold-start` 和 `fold-end` 
 
 `user/message` 本身不携带 turn 编号，同一种事件还可能被上游分类为 steering。`fold-start` 为每个 `source.kind === "user"` 的 append `user/message` 创建候选节点，候选数据记录消息 id 和 seq。
 
-Controller 在最终 ChatSnapshot 中匹配同 seq 的原生节点。原生 kind 为 `user`，且它是该 turn 最后一个普通 user 时，计划把该 candidate key 标记为顶部 toggle；原生 kind 为 `steering`、同 turn 还有更晚的普通 user，或节点归属不完整时，candidate 保持空内容。
+Controller 在最终 ChatSnapshot 中匹配同 seq 的原生节点。它优先为最后一个普通 user 的 candidate 创建顶部控制；没有匹配的普通 user 时，才回退到最后一个 matching steering candidate。中间的 steering 不改变折叠边界，仍由宿主原位展示。
 
 这条路径复用上游已经发布的 `user` 和 `steering` 分类，不读取私有的 `inbox-next-step` Definition key，也不复制其状态结构。
 
@@ -271,13 +271,13 @@ data-chat-flow-kind
 2. 在当前 `data-chat-flow` 内遍历行并比较 `dataset.chatAnchorKey`。
 3. 验证每个目标 key 只映射到一行，且所有行属于当前 session view。
 4. 验证 user、顶部 toggle、过程、底部 toggle、closing assistant 和 turn-tail 的相对顺序。
-5. 验证通过后，一次性应用该 turn 的稳定状态或动画状态。
+5. 验证通过后，一次性应用该 turn 的稳定状态。
 
 若用 CSS selector 查 key，必须经过 `CSS.escape()`。直接遍历元素并比较 dataset 可以减少 selector 拼接错误。
 
 ### 不移动 React 管理的行
 
-ChatView 直接把 `order` 映射为直属 ChatNodeSeat。插件不得把这些行移动到新 wrapper，也不得增删 React 管理的 children。允许的写入只有 adapter 明确拥有的 `data-dsh-fold-*` 属性、`inert`、`aria-hidden` 和约定的内联动画属性。
+ChatView 直接把 `order` 映射为直属 ChatNodeSeat。插件不得把这些行移动到新 wrapper，也不得增删 React 管理的 children。允许的写入只有 adapter 明确拥有的 `data-dsh-fold-*` 属性、`inert`、`aria-hidden` 和约定的内联 `display`、`transform` 属性。
 
 每次写入都记录旧值、插件写入值和 ownership epoch。清理时只恢复仍等于插件写入值的属性；若宿主或其他插件已经改写，清理不覆盖新值。React 开始管理某个现有属性时，view probe 应在任何折叠前失败。
 
@@ -289,31 +289,25 @@ reasoning 行内部的 React state 始终保留。用户展开 turn 后，Think 
 
 ### 首帧和后续结构变化
 
-已完成历史首次挂载或 session 重挂载时不播放动画。Controller 同步提供 FoldModel，`fold-start` 的 layout effect 在浏览器绘制前完成映射并应用稳定折叠态。
+已完成历史首次挂载或 session 重挂载时不播放布局动画。Controller 同步提供 FoldModel，`fold-start` 的 layout effect 在浏览器绘制前完成映射并应用稳定折叠态。
 
-首次 layout effect 无法确认完整映射时，该 turn 在本次 mount 中保持原生展开。后续检查成功也不突然无动画折叠。只有两种情况可以自动折叠：初始 paint 前已经验证完整；当前页面亲历 turn 从 open 变为 completed，并以正常动画收起。
+首次 layout effect 无法确认完整映射时，该 turn 在本次 mount 中保持原生展开。后续检查成功也不突然收起。只有两种情况可以自动折叠：初始 paint 前已经验证完整；当前页面亲历 turn 从 open 变为 completed，并以一次稳定 DOM 提交收起。
 
-分页后才补全的历史 turn 默认保持展开，等下一次 view mount 重新判断。这样不会把用户正在阅读的内容突然移走。
+分页期间 adapter 不改写已有行。分页后才补全的历史 turn 标记为 `late` 并默认保持展开，直到用户首次操作该 turn。这样不会和 ChatView 的 prepend 滚动锚点竞争，也不会把用户正在阅读的内容突然移走。
 
-## 动画、焦点和滚动
+## 稳定收缩、焦点和滚动
 
-### 动画状态机
+### 稳定收缩
 
 稳定折叠态把完整过程 ChatNodeSeat 设为 `display: none`，closing Think 使用相同的可逆隐藏策略。展开态清除插件拥有的稳定隐藏属性。
 
-动画作用于每条待隐藏的原生行和 closing reasoning 子行，不增加 turn wrapper：
+收起和展开都不使用高度或 margin 动画。一次提交内同时隐藏过程 ChatNodeSeat、closing Think 和底部 toggle，避免临时 flex gap 造成闪烁。
 
-1. 读取元素当前高度和 Chat 列表的 computed flex gap。
-2. 固定起始高度，设置 `overflow: hidden`。
-3. 折叠到 `height: 0`、`opacity: 0`，并抵消对应 flex gap。
-4. 完成后进入稳定隐藏态，清除临时尺寸和 margin。
-5. 展开时从稳定隐藏态恢复为可测量状态，执行反向动画，结束后清除内联尺寸。
-
-每个 turn 保存 desired state 和 animation epoch。连续点击会取消旧动画，旧 completion 只有 epoch 仍匹配时才能提交最终状态。session 切换、view 卸载、插件卸载和 `prefers-reduced-motion: reduce` 都直接归一化到目标稳定态。
+当 closing Think 是正文容器的前导子项时，adapter 仅写入自有的 `transform`，把 Think 视觉上放在底部 toggle 之前，并把 toggle 下移到 Think 与正文之间。它不重排 React 拥有的 DOM，也不移动 closing assistant 正文。Think disclosure 高度变化时，`ResizeObserver` 重新计算这两个偏移。
 
 ### 焦点
 
-动画开始时立即为待隐藏区域设置 `inert` 和 `aria-hidden="true"`。展开开始时先移除这两个属性。
+收起前立即为待隐藏区域设置 `inert` 和 `aria-hidden="true"`。展开前先移除这两个属性。
 
 焦点位于过程区域时，收起前移到顶部 toggle。用户点击底部 toggle 收起时，底部按钮本身也会消失，因此必须在更新 store 前调用顶部按钮的 `focus({ preventScroll: true })`，不能把焦点留在触发按钮上。
 
@@ -322,11 +316,11 @@ reasoning 行内部的 React state 始终保留。用户展开 turn 后，Think 
 折叠前先判断用户是否处于宿主底部跟随区域。
 
 - 用户贴近底部时，插件不写 `scrollTop`，让 ChatView 的 ResizeObserver 和 bottom-follow 处理高度变化。
-- 用户正在阅读历史时，选择 closing assistant、顶部 toggle 或其他不会消失的稳定行作为锚点，记录其相对滚动容器的位置。每帧或动画结束后按位置差补偿 `scrollTop`。
+- 用户正在阅读历史时，顶部操作以顶部 toggle 为锚点，底部操作以 closing 正文的第一个稳定元素为锚点，记录其相对滚动容器的位置。稳定提交后只补偿一次 `scrollTop`，不在动画帧中写入滚动位置。
 
 ChatView 使用私有 `observedTopRef` 区分程序写入和用户滚动。外部插件无法同步这份 ledger，历史锚点补偿可能被宿主当成 reader input。该交互必须由真实浏览器测试证明，不能从源码推导为稳定契约。
 
-`loadingOlder` 期间不启动折叠动画，也不与宿主 prepend 锚点同时写 `scrollTop`。adapter 等分页结构提交后再应用稳定状态；无法判断双方所有权时，该次操作 fail-open。
+`loadingOlder` 期间不启动折叠写入，也不与宿主 prepend 锚点同时写 `scrollTop`。adapter 等分页结构提交后再应用稳定状态；无法判断双方所有权时，该次操作 fail-open。
 
 ## 自动折叠条件
 
@@ -335,12 +329,12 @@ ChatView 使用私有 `observedTopRef` 区分程序写入和用户滚动。外�
 - `TurnLocation.status === "closed"`。
 - `turn/start` 和 `turn/end` 都在当前历史窗口中。
 - `turn.end.data.reason.kind === "completed"`。
-- 最后一个普通 user 节点及其顺序可确定。
+- 可匹配的人类输入边界及其顺序可确定。
 - `turn-tail.closing` 存在且 `branchUnavailable === false`。
 - closing assistant 节点已加载且唯一。
 - duration 为有限非负数。
 - 节点分类穷举完成，没有未知 kind。
-- `hiddenKeys` 非空。
+- `hiddenKeys` 非空，或 closing assistant 含有 Think。
 - 当前 view 的能力探针通过。
 - 每个目标 key 都映射到唯一 DOM 行。
 - closing reasoning blocks 与 DOM Think 行数量一致。
@@ -349,7 +343,7 @@ ChatView 使用私有 `observedTopRef` 区分程序写入和用户滚动。外�
 
 - turn 仍在运行或以非 completed 原因结束。
 - 历史分页只加载了半个 turn。
-- 当前窗口没有普通 user，或存在无法确定顺序的普通 user。
+- 当前窗口没有可匹配的人类输入，或其顺序无法确定。
 - closing 缺失、branch 不可用或最终正文节点不唯一。
 - duration 缺失、不是有限数或小于 0。
 - 出现未知 node kind、未知终态或未分类的插件节点。
@@ -427,7 +421,6 @@ dsh-fold-turns/
         contract.ts
         chat-flow-v1.ts
         dom-coordinator.ts
-        animation.ts
         scroll.ts
       locales/
         zh.ts
@@ -481,14 +474,14 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 - `FoldModelController` 与稳定 observable。
 - session-scoped `FoldStateStore`。
 - `fold-start`、`fold-end` Definition 和 O(1) renderer。
-- 无动画的 DOM 精确映射、closing Think 隐藏和完整 cleanup。
+- 无布局动画的 DOM 精确映射、closing Think 隐藏、稳定滚动锚定和完整 cleanup。
 
-动画与滚动可以在稳定折叠成立后继续实现，但发布前必须完成真实浏览器验证。
+稳定收缩和滚动补偿必须通过真实浏览器验证后再发布。
 
 ### 单元测试
 
 - 只有 `completed` turn 可以 eligible，其他终态和未来未知值 fail-open。
-- `fold-start` 只为最后一个普通 user 显示，steering candidate 为空。
+- `fold-start` 优先匹配最后一个普通 user；没有匹配 user 时回退到 steering candidate。
 - `fold-end` 排在 closing assistant 之前，并在 location data 可用后读取 closing。
 - closing 缺失、`branchUnavailable`、负 duration 和不完整边界保持展开。
 - 节点分类表覆盖 adapter 声明的全部 kind，未知 kind 整 turn fail-open。
@@ -507,14 +500,14 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 - `inert`、`aria-hidden`、`aria-expanded` 和焦点转移正确。
 - 底部 toggle 收起前把焦点移到顶部 toggle。
 - ownership ledger 只恢复插件仍拥有的属性。
-- 连续点击、旧 animation completion 和卸载 cleanup 受 epoch 保护。
+- 连续点击、同步稳定收缩和卸载 cleanup 不留下临时样式。
 - session 重挂载在首次 paint 前进入稳定折叠态。
 - 首帧映射失败后保持原生展示，不发生后续突然折叠。
 - view probe 失败后恢复所有插件写入。
 
 ### 真实浏览器测试
 
-- 流式输出期间不折叠，`turn/end completed` 后自动动画折叠。
+- 流式输出期间显示动态耗时且不折叠，`turn/end completed` 后冻结耗时并自动收起。
 - 包含多 step、tool、context、retry、compaction 和 workflow-run 的 turn。
 - think-only、context-only 和没有 tool-call 的 turn。
 - closing assistant 同时包含 reasoning 和正文。
@@ -524,8 +517,8 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 - 分页只加载半个 turn，以及 `loadingOlder` 与 toggle 并发。
 - error、max tokens、取消、blocked、interrupted 和无 final assistant。
 - session 切换保留状态，刷新页面恢复默认折叠。
-- 快速连续点击、动画中切 session、卸载和两个 turn 同时操作。
-- 字体、图片和工具 disclosure 在动画期间改变高度。
+- 快速连续点击、切 session、卸载和两个 turn 同时操作。
+- Think disclosure 高度变化时，底部 toggle 与正文保持正确顺序。
 - `prefers-reduced-motion`、键盘和屏幕阅读器基本操作。
 - 上游增加未知 node kind 或改变 DOM 属性时正确 fail-open。
 
@@ -534,7 +527,7 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 用 `pnpm pack` 生成 tarball，在干净 Web profile 中安装：
 
 ```bash
-dsh plugin --profile web add ./dsh-fold-turns-0.1.0.tgz
+dsh plugin --profile web add ./dsh-fold-turns-0.1.4.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -549,10 +542,10 @@ dsh --profile web
 
 - 不修改 deepseek-harness 上游文件。
 - tarball 能通过 `dsh plugin --profile web add` 安装、启动、更新和卸载。
-- turn 运行期间保持原生展示，completed 后按规则自动折叠。
+- turn 运行期间显示动态耗时但保持原生过程展示，completed 后冻结耗时并按规则自动折叠。
 - 已完成历史首次挂载和 session 重挂载没有入场闪烁。
 - 展开后显示全部原生过程，工具卡片和 Think 的内部状态不丢失。
-- 折叠范围从最后一个普通 user 之后开始，不越过 user 消息。
+- 折叠范围从优先的普通 user 或 steering 回退边界之后开始，不越过人类输入消息。
 - steering、turn-tail 和人类输入节点保持原位可见。
 - 异常终态、未知 kind、截断历史和能力探针失败均 fail-open。
 - 折叠与展开不移动原生 Chat 行，卸载后完整恢复 adapter 拥有的写入。

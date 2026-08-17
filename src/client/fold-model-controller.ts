@@ -12,7 +12,9 @@ import {
   type FoldClosingDto,
   type FoldNodeDto,
   type FoldTurnDto,
+  planRunningTurnFold,
   planTurnFold,
+  type RunningTurnFold,
   type TurnFoldPlan,
 } from './fold-core.ts'
 
@@ -24,6 +26,7 @@ export interface FoldModel {
   readonly plans: ReadonlyMap<number, TurnFoldPlan>
   readonly byStartKey: ReadonlyMap<string, TurnFoldPlan>
   readonly byEndKey: ReadonlyMap<string, TurnFoldPlan>
+  readonly runningByStartKey: ReadonlyMap<string, RunningTurnFold>
   readonly presentationByTurn: ReadonlyMap<number, FoldPresentation>
   readonly defaultExpandedByTurn: ReadonlyMap<number, true>
   readonly loadingOlder: boolean
@@ -63,6 +66,7 @@ const EMPTY_MODEL: FoldModel = {
   plans: new Map(),
   byStartKey: new Map(),
   byEndKey: new Map(),
+  runningByStartKey: new Map(),
   presentationByTurn: new Map(),
   defaultExpandedByTurn: new Map(),
   loadingOlder: false,
@@ -83,6 +87,7 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
   private lastOpenState: unknown
   private lastLoadingOlder: boolean | undefined
   private plans = new Map<number, TurnFoldPlan>()
+  private running = new Map<string, RunningTurnFold>()
   private presentations = new Map<number, FoldPresentation>()
   private records = new Map<number, TurnRecord>()
   private evidence = new Map<number, TurnEvidence>()
@@ -117,7 +122,7 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
   acknowledgeLateDefault(turn: number): void {
     if (this.lateDefaults.get(turn) === false) return
     this.lateDefaults.set(turn, false)
-    this.publish(this.plans, this.presentations, this.getSnapshot().loadingOlder)
+    this.publish(this.plans, this.presentations, this.running, this.getSnapshot().loadingOlder)
   }
 
   /** Stop listening to the session and release model references. */
@@ -126,6 +131,7 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
     this.disposed = true
     this.unsubscribe()
     this.plans.clear()
+    this.running.clear()
     this.presentations.clear()
     this.records.clear()
     this.evidence.clear()
@@ -153,14 +159,18 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
     this.recomputeCount += 1
 
     const nextPlans = new Map<number, TurnFoldPlan>()
+    const nextRunning = new Map<string, RunningTurnFold>()
     const nextPresentations = new Map<number, FoldPresentation>()
     const nextRecords = new Map<number, TurnRecord>()
     const loadingOlder = snapshot.loadingOlder
     for (const turnNumber of chat.timeline.turnOrder) {
       const turn = chat.timeline.turns.get(turnNumber)
       if (turn === undefined) continue
-      const plan = planTurnFold(projectTurn(chat, turn))
+      const projectedTurn = projectTurn(chat, turn)
+      const plan = planTurnFold(projectedTurn)
       nextPlans.set(turnNumber, plan)
+      const running = planRunningTurnFold(projectedTurn)
+      if (running !== undefined) nextRunning.set(running.startCandidateKey, running)
       const record: TurnRecord = { status: turn.status, end: turn.end }
       nextRecords.set(turnNumber, record)
       if (!plan.eligible) continue
@@ -168,10 +178,11 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
     }
 
     this.plans = nextPlans
+    this.running = nextRunning
     this.presentations = nextPresentations
     this.records = nextRecords
     this.evidence = this.collectEvidence(chat, nextPlans)
-    this.publish(nextPlans, nextPresentations, loadingOlder)
+    this.publish(nextPlans, nextPresentations, nextRunning, loadingOlder)
   }
 
   private hasEvidenceChanged(chat: ChatSnapshot): boolean {
@@ -208,6 +219,7 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
   private publish(
     plans: ReadonlyMap<number, TurnFoldPlan>,
     presentations: ReadonlyMap<number, FoldPresentation>,
+    running: ReadonlyMap<string, RunningTurnFold>,
     loadingOlder: boolean,
   ): void {
     const byStartKey = new Map<string, TurnFoldPlan>()
@@ -225,6 +237,7 @@ export class FoldModelController implements ObservableSnapshot<FoldModel> {
       plans: new Map(plans),
       byStartKey,
       byEndKey,
+      runningByStartKey: new Map(running),
       presentationByTurn: new Map(presentations),
       defaultExpandedByTurn,
       loadingOlder,

@@ -1,6 +1,6 @@
 {
   "name": "dsh-fold-turns",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Fold completed DeepSeek Harness chat turns without replacing native renderers.",
   "license": "MIT",
   "type": "module",

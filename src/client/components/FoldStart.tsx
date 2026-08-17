@@ -1,4 +1,4 @@
-import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { MouseEvent } from 'react'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-runtime/client'
@@ -20,7 +20,20 @@ type FoldStartProps = PropsRuntime<'conversation.chat.node', 'fold-start'>
   & Omit<FoldStartInjected, 'hooks'>
   & { readonly useFoldModel: <S>(selector: (model: FoldModel) => S) => S }
 
-/** Top toggle, mounted only for an eligible plan's final ordinary user candidate. */
+/** Update a running duration once per second and stop as soon as it is final. */
+export function useElapsedDuration(startedAt: number | undefined): number {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (startedAt === undefined) return
+    const tick = () => { setNow(Date.now()) }
+    tick()
+    const timer = setInterval(tick, 1_000)
+    return () => { clearInterval(timer) }
+  }, [startedAt])
+  return startedAt === undefined ? 0 : Math.max(0, now - startedAt)
+}
+
+/** Top status row for a running turn and toggle for an eligible completed turn. */
 export const FoldStart = memo(function FoldStart({
   node, useFoldModel, useStore, actions, coordinator, acknowledgeLateDefault, t,
 }: FoldStartProps) {
@@ -29,9 +42,11 @@ export const FoldStart = memo(function FoldStart({
   const buttonRef = useCallback((node: HTMLButtonElement | null) => { setButton(node) }, [])
   const model = useFoldModel(value => value)
   const plan = model.byStartKey.get(node.key)
+  const running = model.runningByStartKey.get(node.key)
+  const runningDuration = useElapsedDuration(plan === undefined ? running?.startedAt : undefined)
   const explicitlyExpanded = useStore(state => plan === undefined ? false : state.expandedByTurn[String(plan.turn)] === true)
   const defaultExpanded = plan !== undefined && model.defaultExpandedByTurn.get(plan.turn) === true
-  const expanded = explicitlyExpanded || defaultExpanded || model.loadingOlder
+  const expanded = explicitlyExpanded || defaultExpanded
 
   useLayoutEffect(() => {
     if (button === null) return
@@ -50,21 +65,35 @@ export const FoldStart = memo(function FoldStart({
 
   const onToggle = useCallback((event: MouseEvent<HTMLButtonElement>) => {
     if (plan === undefined || plan.durationMs === undefined) return
-    coordinator.requestToggle(plan.turn, expanded, event.currentTarget, event.detail !== 0)
+    coordinator.requestToggle(plan.turn, expanded, event.currentTarget)
     acknowledgeLateDefault(plan.turn)
     if (expanded) actions.collapse(plan.turn)
     else actions.expand(plan.turn)
   }, [acknowledgeLateDefault, actions, coordinator, expanded, plan])
 
-  if (plan === undefined || !plan.eligible || plan.durationMs === undefined) return null
+  if (plan !== undefined && plan.eligible && plan.durationMs !== undefined) {
+    return (
+      <FoldToggle
+        buttonRef={buttonRef}
+        durationMs={plan.durationMs}
+        expanded={expanded}
+        position="start"
+        label={t('toggle.worked', { duration: formatDuration(plan.durationMs) })}
+        ariaLabel={t(expanded ? 'toggle.collapse' : 'toggle.expand', { turn: plan.turn })}
+        onToggle={onToggle}
+      />
+    )
+  }
+  if (running === undefined) return null
   return (
     <FoldToggle
       buttonRef={buttonRef}
-      durationMs={plan.durationMs}
-      expanded={expanded}
+      durationMs={runningDuration}
+      expanded={false}
       position="start"
-      label={t('toggle.worked', { duration: formatDuration(plan.durationMs) })}
-      ariaLabel={t(expanded ? 'toggle.collapse' : 'toggle.expand', { turn: plan.turn })}
+      label={t('toggle.running', { duration: formatDuration(runningDuration) })}
+      ariaLabel={t('toggle.running', { duration: formatDuration(runningDuration) })}
+      interactive={false}
       onToggle={onToggle}
     />
   )

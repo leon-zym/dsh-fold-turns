@@ -31,7 +31,7 @@ export const FoldEnd = memo(function FoldEnd({
   const plan = model.byEndKey.get(node.key)
   const explicitlyExpanded = useStore(state => plan === undefined ? false : state.expandedByTurn[String(plan.turn)] === true)
   const defaultExpanded = plan !== undefined && model.defaultExpandedByTurn.get(plan.turn) === true
-  const expanded = explicitlyExpanded || defaultExpanded || model.loadingOlder
+  const expanded = explicitlyExpanded || defaultExpanded
 
   useLayoutEffect(() => {
     if (button === null || plan === undefined || !expanded) return
@@ -41,7 +41,7 @@ export const FoldEnd = memo(function FoldEnd({
 
   const onToggle = useCallback((event: MouseEvent<HTMLButtonElement>) => {
     if (plan === undefined || plan.durationMs === undefined) return
-    coordinator.requestToggle(plan.turn, expanded, event.currentTarget, event.detail !== 0)
+    coordinator.requestToggle(plan.turn, expanded, event.currentTarget)
     acknowledgeLateDefault(plan.turn)
     if (expanded) actions.collapse(plan.turn)
     else actions.expand(plan.turn)

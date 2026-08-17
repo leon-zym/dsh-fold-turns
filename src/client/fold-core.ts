@@ -16,7 +16,7 @@ export type FoldFailureReason =
   | 'missing-closing-node'
   | 'ambiguous-closing-node'
   | 'invalid-closing'
-  | 'missing-user'
+  | 'missing-human-input'
   | 'missing-fold-start'
   | 'ambiguous-fold-start'
   | 'missing-fold-end'
@@ -61,7 +61,8 @@ export interface TurnFoldPlan {
   readonly turn: number
   readonly eligible: boolean
   readonly reason?: FoldFailureReason
-  readonly startUserKey?: string
+  /** Latest normal user input, with a steering input used only as fallback. */
+  readonly startInputKey?: string
   readonly startCandidateKey?: string
   readonly closingKey?: string
   readonly endToggleKey?: string
@@ -69,6 +70,13 @@ export interface TurnFoldPlan {
   readonly hiddenKeys: readonly string[]
   readonly closingReasoningCount: number
   readonly durationMs?: number
+}
+
+/** Live status for an open turn whose source message already has a top row. */
+export interface RunningTurnFold {
+  readonly turn: number
+  readonly startCandidateKey: string
+  readonly startedAt: number
 }
 
 type NodeDisposition = 'before-start' | 'start' | 'end' | 'closing' | 'tail' | 'visible' | 'hidden' | 'invalid'
@@ -115,18 +123,10 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
   if (closing.branchUnavailable) return fail(turn.turn, 'branch-unavailable')
   if (!finite(closing.finalSeq)) return fail(turn.turn, 'invalid-closing')
 
-  const ordinaryUsers = turn.nodes.filter(node => node.kind === 'user' && finite(node.anchorSeq))
-  const startUser = ordinaryUsers.reduce<FoldNodeDto | undefined>(
-    (latest, candidate) => latest === undefined || candidate.anchorSeq > latest.anchorSeq ? candidate : latest,
-    undefined,
-  )
-  if (startUser === undefined) return fail(turn.turn, 'missing-user')
-
-  const startCandidates = turn.nodes.filter(node => node.kind === 'fold-start' && node.sourceSeq === startUser.anchorSeq)
-  if (startCandidates.length === 0) return fail(turn.turn, 'missing-fold-start')
-  if (startCandidates.length !== 1) return fail(turn.turn, 'ambiguous-fold-start')
-  const startCandidate = startCandidates[0]
-  if (startCandidate === undefined) return fail(turn.turn, 'missing-fold-start')
+  const humanStart = latestHumanStart(turn.nodes)
+  if (humanStart === 'missing-human-input') return fail(turn.turn, humanStart)
+  if (humanStart === 'missing-fold-start' || humanStart === 'ambiguous-fold-start') return fail(turn.turn, humanStart)
+  const { input: startInput, candidate: startCandidate } = humanStart
 
   const closingCandidates = turn.nodes.filter(node => node.kind === 'assistant-step' && node.finalSeq === closing.finalSeq)
   if (closingCandidates.length === 0) return fail(turn.turn, 'missing-closing-node')
@@ -143,11 +143,11 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
   const endCandidate = endCandidates[0]
   if (endCandidate === undefined) return fail(turn.turn, 'missing-fold-end')
 
-  const startUserAt = nodeIndex(turn.nodes, startUser.key)
+  const startInputAt = nodeIndex(turn.nodes, startInput.key)
   const startAt = nodeIndex(turn.nodes, startCandidate.key)
   const endAt = nodeIndex(turn.nodes, endCandidate.key)
   const closingAt = nodeIndex(turn.nodes, closingNode.key)
-  if (startUserAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(startUserAt < startAt && startAt < endAt && endAt < closingAt)) {
+  if (startInputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(startInputAt < startAt && startAt < endAt && endAt < closingAt)) {
     return fail(turn.turn, 'invalid-order')
   }
 
@@ -155,7 +155,7 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
   for (let index = 0; index < turn.nodes.length; index += 1) {
     const node = turn.nodes[index]
     if (node === undefined) return fail(turn.turn, 'unknown-node-kind')
-    if (index <= startUserAt) {
+    if (index <= startInputAt) {
       if (!knownBeforeStart(node.kind)) return fail(turn.turn, 'unknown-node-kind')
       dispositions.set(node.key, 'before-start')
       continue
@@ -178,7 +178,7 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
       continue
     }
 
-    const disposition = classifyNode(node.kind, index, startUserAt, closingAt)
+    const disposition = classifyNode(node.kind, index, startInputAt, closingAt)
     if (disposition === 'invalid') return fail(turn.turn, 'unknown-node-kind')
     if (disposition === 'hidden' && !(index > startAt && index < endAt)) {
       return fail(turn.turn, 'process-outside-boundary')
@@ -198,7 +198,7 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
   return {
     turn: turn.turn,
     eligible: true,
-    startUserKey: startUser.key,
+    startInputKey: startInput.key,
     startCandidateKey: startCandidate.key,
     closingKey: closingNode.key,
     endToggleKey: endCandidate.key,
@@ -207,6 +207,49 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
     closingReasoningCount: closingNode.reasoningCount,
     durationMs,
   }
+}
+
+/**
+ * Identify an open turn whose source message can immediately show a status
+ * row. A matching fold-start candidate is required so unrelated steering
+ * context never produces a control.
+ */
+export function planRunningTurnFold(turn: FoldTurnDto): RunningTurnFold | undefined {
+  if (turn.status !== 'open' || !finite(turn.startTime)) return undefined
+  const humanStart = latestHumanStart(turn.nodes)
+  if (typeof humanStart === 'string') return undefined
+  return {
+    turn: turn.turn,
+    startCandidateKey: humanStart.candidate.key,
+    startedAt: turn.startTime,
+  }
+}
+
+type HumanStartResult = { readonly input: FoldNodeDto; readonly candidate: FoldNodeDto }
+  | 'missing-human-input'
+  | 'missing-fold-start'
+  | 'ambiguous-fold-start'
+
+/**
+ * Prefer the latest regular user node that owns a start row. If a turn has no
+ * regular user node because DSH classified its human message as `steering`,
+ * use the latest matching steering node instead. Other steering stays visible
+ * inside the turn rather than redefining the fold boundary.
+ */
+function latestHumanStart(nodes: readonly FoldNodeDto[]): HumanStartResult {
+  const humanInputs = nodes.filter(node => (node.kind === 'user' || node.kind === 'steering') && finite(node.anchorSeq))
+  if (humanInputs.length === 0) return 'missing-human-input'
+  const startsFor = (kind: 'user' | 'steering') => humanInputs
+    .filter(input => input.kind === kind)
+    .map(input => ({ input, candidates: nodes.filter(node => node.kind === 'fold-start' && node.sourceSeq === input.anchorSeq) }))
+    .filter(({ candidates }) => candidates.length > 0)
+    .sort((left, right) => left.input.anchorSeq - right.input.anchorSeq)
+  const latest = startsFor('user').at(-1) ?? startsFor('steering').at(-1)
+  if (latest === undefined) return 'missing-fold-start'
+  if (latest.candidates.length !== 1) return 'ambiguous-fold-start'
+  const candidate = latest.candidates[0]
+  if (candidate === undefined) return 'missing-fold-start'
+  return { input: latest.input, candidate }
 }
 
 function knownBeforeStart(kind: string): boolean {

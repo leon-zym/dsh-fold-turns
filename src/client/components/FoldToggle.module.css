@@ -66,12 +66,17 @@
   outline-offset: 2px;
 }
 
-.button:active {
+.button:enabled:active {
   scale: 0.98;
 }
 
+.button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
 @media (hover: hover) {
-  .button:hover {
+  .button:enabled:hover {
     color: var(--dsw-alias-label-secondary);
   }
 }

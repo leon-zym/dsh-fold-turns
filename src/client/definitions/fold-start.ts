@@ -14,7 +14,7 @@ const START_AFTER_USER = 0.001
  *
  * The native message Definition decides later whether that message is a
  * `user` or `steering` node. FoldCore only activates the candidate paired
- * with the final ordinary user in its turn.
+ * with the latest normal user in its turn, or a matching steering fallback.
  */
 export const foldStartDefinition: ConversationNodeDefinition<FoldStartData> = {
   kind: FOLD_START_KIND,
