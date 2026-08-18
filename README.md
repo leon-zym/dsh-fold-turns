@@ -23,9 +23,9 @@ The intermediate process is replaced by a compact duration row while the final a
 
 Click either duration row to restore the original context, reasoning, and tool activity.
 
-![The upper part of an expanded DeepSeek Harness turn](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-1.png)
-
-![The lower part of an expanded DeepSeek Harness turn](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-2.png)
+| Upper process | Lower process and final answer |
+| --- | --- |
+| [![The upper part of an expanded DeepSeek Harness turn](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-1.png)](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-1.png) | [![The lower part of an expanded DeepSeek Harness turn](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-2.png)](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-2.png) |
 
 ## Install
 

@@ -23,9 +23,9 @@
 
 点击任意一个耗时栏，即可恢复原始的上下文、思考和工具活动。
 
-![DeepSeek Harness 展开轮次的上半部分](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-1.png)
-
-![DeepSeek Harness 展开轮次的下半部分](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-2.png)
+| 过程上半部分 | 过程下半部分与最终回答 |
+| --- | --- |
+| [![DeepSeek Harness 展开轮次的上半部分](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-1.png)](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-1.png) | [![DeepSeek Harness 展开轮次的下半部分](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-2.png)](https://raw.githubusercontent.com/leon-zym/dsh-fold-turns/main/docs/assets/demo-expand-2.png) |
 
 ## 安装
 
