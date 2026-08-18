@@ -29,24 +29,30 @@ Click either duration row to restore the original context, reasoning, and tool a
 
 ## Install
 
-Install the published npm package into the DSH Web profile:
+Most users only need these commands. Install the published npm package into the DSH Web profile:
 
 ```sh
 dsh plugin --profile web add dsh-fold-turns
 ```
 
-Restart the Web process after installing or updating the plugin. DSH composes its client module list at startup.
-
-To install a downloaded release tarball instead:
+Update an existing installation:
 
 ```sh
-dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
+dsh plugin --profile web update dsh-fold-turns
 ```
 
-Remove the plugin with:
+Remove the plugin:
 
 ```sh
 dsh plugin --profile web remove dsh-fold-turns
+```
+
+Restart the Web process after installing, updating, or removing the plugin. DSH composes its client module list at startup.
+
+For local development or a downloaded release tarball instead:
+
+```sh
+dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
 ```
 
 ## Using the plugin

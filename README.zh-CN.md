@@ -29,24 +29,30 @@
 
 ## 安装
 
-在 DSH 的 Web profile 中安装已发布的 npm 包：
+普通用户通常只需要以下命令。在 DSH 的 Web profile 中安装已发布的 npm 包：
 
 ```sh
 dsh plugin --profile web add dsh-fold-turns
 ```
 
-安装或更新插件后，请重启 Web 进程。DSH 会在启动时组合客户端模块列表。
-
-也可以安装下载好的 release tarball：
+更新已有安装：
 
 ```sh
-dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
+dsh plugin --profile web update dsh-fold-turns
 ```
 
 卸载插件：
 
 ```sh
 dsh plugin --profile web remove dsh-fold-turns
+```
+
+安装、更新或卸载插件后，请重启 Web 进程。DSH 会在启动时组合客户端模块列表。
+
+开发者或需要测试本地构建时，也可以直接安装 release tarball：
+
+```sh
+dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
 ```
 
 ## 使用方式
