@@ -70,8 +70,8 @@ Worked for 2m 03s
 用户消息
 顶部 toggle
 所有原生过程
-最后一条 assistant 消息
 底部 toggle
+最后一条 assistant 消息正文
 ```
 
 顶部和底部 toggle 操作同一个状态。底部 toggle 让用户在读完整个过程后直接收起，不需要返回顶部。
@@ -174,7 +174,7 @@ Map<sessionId, Map<turnNumber, "collapsed" | "expanded">>
 
 - 普通多 step turn 在运行期间完整展示，结束后自动折叠。
 - 折叠顺序为 user、顶部 toggle、closing assistant。
-- 展开顺序为 user、顶部 toggle、全部原生过程、closing assistant、底部 toggle。
+- 展开顺序为 user、顶部 toggle、全部原生过程、底部 toggle、最后一条 assistant 消息正文。
 - 无 tool-call 的 Think-only 或 context-only turn 也能折叠。
 - user 前后的 context 能被正确区分，折叠不越过普通 user。
 - 一条或多条 steering 消息在折叠态保持可见。

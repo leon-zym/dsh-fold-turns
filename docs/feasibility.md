@@ -200,7 +200,7 @@ store 不声明 `persist`。同一个 handle 传给 `fold-start` 和 `fold-end` 
 插件注册两个 Chat 节点类型：
 
 - `fold-start` 位于匹配的人类输入之后，eligible turn 在折叠和展开时都显示。
-- `fold-end` 位于 closing assistant 之后、turn-tail 之前，只在展开时显示。
+- `fold-end` 位于 closing assistant 之前、turn-tail 之前，只在展开时显示。
 
 两个节点都通过 `conversation.chat.node` 注册 React renderer，不向 Chat 列表手工插入 DOM 兄弟节点。
 
@@ -216,7 +216,7 @@ Controller 在最终 ChatSnapshot 中匹配同 seq 的原生节点。它优先�
 
 #### fold-end
 
-`fold-end` 在 `turn/end` 上创建。Conversation assembler 会先发布 location data，再构建 view nodes，因此 `fold-end.buildViewNode()` 可以从当前 `TurnLocation.data` 读取 `turn-tail.closing`，把自身锚点放在 closing assistant 之后、turn-tail 之前。这样视觉、DOM、键盘和屏幕阅读器顺序保持一致。
+`fold-end` 在 `turn/end` 上创建。Conversation assembler 会先发布 location data，再构建 view nodes，因此 `fold-end.buildViewNode()` 可以从当前 `TurnLocation.data` 读取 `turn-tail.closing`，把自身锚点放在 closing assistant 之前。
 
 closing 不可用时，Definition 仍保持稳定 key，但节点不可见或 renderer 返回空内容。增量更新后不能撤回已 materialize 的 node key。
 
@@ -305,7 +305,7 @@ reasoning 行内部的 React state 始终保留。用户展开 turn 后，Think 
 
 收起和展开都不使用高度或 margin 动画。一次提交内同时隐藏过程 ChatNodeSeat、closing Think 和底部 toggle，避免临时 flex gap 造成闪烁。
 
-底部 toggle 的 Definition 锚点天然位于完整 closing assistant 行之后，因此 adapter 不做视觉重排，也不写 `transform`。折叠时只隐藏 closing 行内的 Think；非 Think 正文保持在原行，展开后底部 toggle 在视觉、DOM、键盘和屏幕阅读器顺序中都位于完整 closing assistant 之后。
+当 closing Think 是正文容器的前导子项时，adapter 仅写入自有的 `transform`，把 Think 视觉上放在底部 toggle 之前，并把 toggle 下移到 Think 与正文之间。它不重排 React 拥有的 DOM，也不移动 closing assistant 正文。Think disclosure 高度变化时，`ResizeObserver` 重新计算这两个偏移。
 
 adapter 为存在折叠 turn 的 `data-chat-flow` 安装 `MutationObserver`。直属 ChatNodeSeat 被插入或替换时重新核对精确 key 映射；turn 仍处于 `checking` 时也观察子树提交，以等待 closing 行内迟到的 Think。映射重新完整后一次性恢复目标折叠状态，不通过定时器或尺寸观察器推测宿主何时稳定。
 
@@ -486,7 +486,7 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 
 - 只有 `completed` turn 可以 eligible，其他终态和未来未知值 fail-open。
 - `fold-start` 优先匹配最后一个普通 user；没有匹配 user 时回退到 steering candidate。
-- `fold-end` 排在 closing assistant 之后、turn-tail 之前，并在 location data 可用后读取 closing。
+- `fold-end` 排在 closing assistant 之前、turn-tail 之前，并在 location data 可用后读取 closing。
 - closing 缺失、`branchUnavailable`、负 duration 和不完整边界保持展开。
 - 节点分类表覆盖 adapter 声明的全部 kind，未知 kind 整 turn fail-open。
 - hidden key 不包含 user、steering、closing 正文、turn-tail 和人类输入节点。
@@ -522,7 +522,7 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 - error、max tokens、取消、blocked、interrupted 和无 final assistant。
 - session 切换保留状态，刷新页面恢复默认折叠。
 - 快速连续点击、切 session、卸载和两个 turn 同时操作。
-- closing assistant 与底部 toggle 的视觉、DOM、键盘和屏幕阅读器顺序一致。
+- Think disclosure 高度变化时，底部 toggle 与正文保持正确的视觉顺序。
 - `prefers-reduced-motion`、键盘和屏幕阅读器基本操作。
 - 上游增加未知 node kind 或改变 DOM 属性时正确 fail-open。
 
@@ -531,7 +531,7 @@ renderer shadow 没有“委托下一个 renderer”的正式接口。插件需�
 用 `pnpm pack` 生成 tarball，在干净 Web profile 中安装：
 
 ```bash
-dsh plugin --profile web add ./dsh-fold-turns-0.1.4.tgz
+dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
 dsh --profile web --dump-config
 dsh --profile web
 ```

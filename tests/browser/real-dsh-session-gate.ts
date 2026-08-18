@@ -73,15 +73,32 @@ async function runGate(): Promise<void> {
   await bottom.waitFor({ timeout: 10_000 })
   const order = await bottom.evaluate((button) => {
     const bottomRow = button.closest<HTMLElement>('[data-chat-flow-key]')
-    const closingRow = bottomRow?.previousElementSibling
+    const closingRow = bottomRow?.nextElementSibling
+    const thinking = closingRow?.querySelector<HTMLElement>('[data-variant="think"]')
+    const body = thinking?.parentElement
+    const lowerContent = thinking === undefined || body === null || body === undefined
+      ? undefined
+      : Array.from(body.children).find((child) => child instanceof HTMLElement && child !== thinking) as HTMLElement | undefined
+    const bottomRect = bottomRow?.getBoundingClientRect()
+    const thinkingRect = thinking?.getBoundingClientRect()
+    const lowerContentRect = lowerContent?.getBoundingClientRect()
     return {
       closingKind: closingRow instanceof HTMLElement ? closingRow.dataset.chatFlowKind : undefined,
-      followsClosing: closingRow instanceof HTMLElement && bottomRow instanceof HTMLElement
-        ? (closingRow.compareDocumentPosition(bottomRow) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      followsClosingInDom: closingRow instanceof HTMLElement && bottomRow instanceof HTMLElement
+        ? (bottomRow.compareDocumentPosition(closingRow) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
         : false,
+      toggleAfterThinking: bottomRect !== undefined && thinkingRect !== undefined
+        ? bottomRect.top >= thinkingRect.bottom - 1
+        : false,
+      toggleBeforeFinal: bottomRect !== undefined && lowerContentRect !== undefined
+        ? bottomRect.bottom <= lowerContentRect.top + 1
+        : false,
+      thinkingTransform: thinking?.style.transform,
+      toggleTransform: bottomRow?.style.transform,
     }
   })
-  assert(order.closingKind === 'assistant-step' && order.followsClosing, 'bottom toggle is not after the closing assistant in DOM order')
+  assert(order.closingKind === 'assistant-step' && order.followsClosingInDom, 'bottom toggle is not followed by the closing assistant in DOM order')
+  assert(order.toggleAfterThinking && order.toggleBeforeFinal, 'bottom toggle is not visually between closing Think and final assistant content')
 
   await bottom.click()
   await top.waitFor({ state: 'visible', timeout: 10_000 })

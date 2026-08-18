@@ -87,6 +87,20 @@ class OwnershipLedger {
     }
   }
 
+  /** Restore one plugin-owned inline style without disturbing other writes. */
+  restoreStyle(element: HTMLElement, name: string): void {
+    const entries = this.styles.get(element)
+    const entry = entries?.get(name)
+    if (entry === undefined || entries === undefined) return
+    if (element.style.getPropertyValue(name) === entry.written
+      && element.style.getPropertyPriority(name) === entry.writtenPriority) {
+      if (entry.previous === '') element.style.removeProperty(name)
+      else element.style.setProperty(name, entry.previous, entry.priority)
+    }
+    entries.delete(name)
+    if (entries.size === 0) this.styles.delete(element)
+  }
+
   restoreAll(): void {
     for (const element of new Set([...this.attributes.keys(), ...this.styles.keys()])) this.restore(element)
   }
@@ -100,6 +114,7 @@ interface MountedTurn {
   bottom?: HTMLButtonElement
   appliedExpanded?: boolean
   mapping?: TurnElements
+  layoutObserver?: ResizeObserver
   pending?: { readonly anchor: ToggleAnchor; readonly scrollAnchor?: ScrollAnchor }
   blocked: boolean
 }
@@ -116,10 +131,16 @@ interface TurnElements {
   readonly thinking: readonly HTMLElement[]
 }
 
+interface ClosingLayout {
+  readonly thinking: readonly HTMLElement[]
+  readonly lowerAnchor: HTMLElement
+}
+
 /**
  * DOM-only `chat-flow-v1` adapter.
  *
- * It changes only exact plugin-owned attributes plus inline visibility styles.
+ * It changes only exact plugin-owned attributes plus inline visibility and
+ * positioning styles.
  * Native ChatNodeSeat nodes remain in their React-owned parent throughout.
  */
 export class ChatFlowDomCoordinator implements FoldDomCoordinator {
@@ -265,7 +286,10 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
       return
     }
     const mappingChanged = !sameElements(mounted.mapping, elements)
-    if (mappingChanged && mounted.mapping !== undefined) this.restoreElements(mounted.mapping)
+    if (mappingChanged && mounted.mapping !== undefined) {
+      this.clearClosingLayout(mounted, mounted.mapping)
+      this.restoreElements(mounted.mapping)
+    }
     mounted.mapping = elements
     const desiredExpanded = state.expanded
     const firstApply = mounted.appliedExpanded === undefined
@@ -279,7 +303,7 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
     // default-expanded plan on the next stable snapshot.
     if (state.loadingOlder) {
       if (firstApply) {
-        this.showStable(elements)
+        this.showStable(turn, elements, mounted)
         mounted.appliedExpanded = true
       }
       this.setCapability(turn, 'available')
@@ -291,8 +315,8 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
       return
     }
     if (firstApply) {
-      if (desiredExpanded) this.showStable(elements)
-      else this.collapseStable(elements, mounted.button, anchor, scrollAnchor)
+      if (desiredExpanded) this.showStable(turn, elements, mounted)
+      else this.collapseStable(elements, mounted, mounted.button, anchor, scrollAnchor)
       mounted.appliedExpanded = desiredExpanded
       this.setCapability(turn, 'available')
       this.pruneFlowObservers()
@@ -300,16 +324,16 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
     }
     if (mounted.appliedExpanded === desiredExpanded) {
       if (mappingChanged) {
-        if (desiredExpanded) this.showStable(elements)
-        else this.collapseStable(elements, mounted.button, anchor, scrollAnchor)
+        if (desiredExpanded) this.showStable(turn, elements, mounted)
+        else this.collapseStable(elements, mounted, mounted.button, anchor, scrollAnchor)
       }
       this.setCapability(turn, 'available')
       this.pruneFlowObservers()
       return
     }
     mounted.appliedExpanded = desiredExpanded
-    if (desiredExpanded) this.expandStable(elements, anchor, scrollAnchor)
-    else this.collapseStable(elements, mounted.button, anchor, scrollAnchor)
+    if (desiredExpanded) this.expandStable(turn, elements, mounted, anchor, scrollAnchor)
+    else this.collapseStable(elements, mounted, mounted.button, anchor, scrollAnchor)
     this.setCapability(turn, 'available')
     this.pruneFlowObservers()
   }
@@ -317,10 +341,12 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
   /** Preserve the clicked edge while removing all collapsed content at once. */
   private collapseStable(
     elements: TurnElements,
+    mounted: MountedTurn,
     button: HTMLButtonElement,
     edge: ToggleAnchor,
     priorAnchor: ScrollAnchor | undefined,
   ): void {
+    this.clearClosingLayout(mounted, elements)
     const scrollAnchor = priorAnchor ?? captureScrollAnchor(elements.flow, this.anchorElement(elements, edge))
     this.hideStable(elements, button)
     restoreScrollAnchor(scrollAnchor)
@@ -328,12 +354,14 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
 
   /** Expansion is only reachable from the top row, but is safe for either edge. */
   private expandStable(
+    turn: number,
     elements: TurnElements,
+    mounted: MountedTurn,
     edge: ToggleAnchor,
     priorAnchor: ScrollAnchor | undefined,
   ): void {
     const anchor = priorAnchor ?? captureScrollAnchor(elements.flow, this.anchorElement(elements, edge))
-    this.showStable(elements)
+    this.showStable(turn, elements, mounted)
     restoreScrollAnchor(anchor)
   }
 
@@ -348,10 +376,54 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
     this.hideElement(elements.end, 'data-dsh-fold-end-hidden')
   }
 
-  private showStable(elements: TurnElements): void {
+  private showStable(turn: number, elements: TurnElements, mounted: MountedTurn): void {
+    this.clearClosingLayout(mounted, elements)
     for (const row of elements.rows) this.ledger.restore(row)
     for (const think of elements.thinking) this.ledger.restore(think)
     this.ledger.restore(elements.end)
+    this.arrangeClosing(elements)
+    this.watchClosingLayout(turn, mounted, elements)
+  }
+
+  /** Swap the visual slots of the lower row and closing Think without reparenting. */
+  private arrangeClosing(elements: TurnElements): void {
+    const layout = closingLayoutFor(elements)
+    if (layout === undefined) return
+    const endHeight = Math.max(0, elements.end.getBoundingClientRect().height)
+    const first = layout.thinking[0]
+    const last = layout.thinking.at(-1)
+    if (first === undefined || last === undefined) return
+    const thinkingHeight = Math.max(0, last.getBoundingClientRect().bottom - first.getBoundingClientRect().top)
+    const flowGap = rowGap(elements.flow)
+    const bodyGap = rowGap(first.parentElement)
+    const thinkOffset = -(endHeight + flowGap)
+    const endOffset = thinkingHeight + bodyGap
+    for (const think of layout.thinking) this.ledger.style(think, 'transform', `translateY(${thinkOffset}px)`)
+    this.ledger.style(elements.end, 'transform', `translateY(${endOffset}px)`)
+  }
+
+  private watchClosingLayout(turn: number, mounted: MountedTurn, elements: TurnElements): void {
+    const layout = closingLayoutFor(elements)
+    const Observer = elements.flow.ownerDocument.defaultView?.ResizeObserver
+    if (layout === undefined || Observer === undefined) return
+    mounted.layoutObserver?.disconnect()
+    const observer = new Observer(() => {
+      const state = mounted.state
+      if (this.disabled || this.turns.get(turn) !== mounted || mounted.mapping !== elements
+        || state?.expanded !== true || state.loadingOlder) return
+      this.arrangeClosing(elements)
+    })
+    mounted.layoutObserver = observer
+    observer.observe(elements.end)
+    for (const think of layout.thinking) observer.observe(think)
+  }
+
+  private clearClosingLayout(mounted: MountedTurn, elements: TurnElements | undefined): void {
+    mounted.layoutObserver?.disconnect()
+    delete mounted.layoutObserver
+    if (elements === undefined) return
+    this.ledger.restoreStyle(elements.end, 'transform')
+    for (const think of elements.thinking) this.ledger.restoreStyle(think, 'transform')
   }
 
   private hideElement(element: HTMLElement, marker: string): void {
@@ -373,6 +445,7 @@ export class ChatFlowDomCoordinator implements FoldDomCoordinator {
 
   private restoreTurn(_turn: number, mounted: MountedTurn): void {
     const mapped = mounted.mapping
+    this.clearClosingLayout(mounted, mapped)
     delete mounted.mapping
     if (mapped !== undefined) this.restoreElements(mapped)
   }
@@ -518,7 +591,7 @@ function elementsFor(rows: ChatFlowRows, plan: TurnFoldPlan): TurnElements | und
   if (start === undefined || end === undefined || closing === undefined || hidden.some(row => row === undefined)) return undefined
   const thinking = Array.from(closing.querySelectorAll<HTMLElement>('[data-variant="think"]'))
   const provisional: TurnElements = { flow: rows.flow, start, end, closing, rows: hidden as HTMLElement[], thinking }
-  const lowerAnchor = lowerAnchorFor(provisional)
+  const lowerAnchor = closingLayoutFor(provisional)?.lowerAnchor
   return {
     flow: rows.flow,
     start,
@@ -530,16 +603,24 @@ function elementsFor(rows: ChatFlowRows, plan: TurnFoldPlan): TurnElements | und
   }
 }
 
-/** Prefer the first non-Think sibling as the stable bottom-collapse scroll anchor. */
-function lowerAnchorFor(elements: TurnElements): HTMLElement | undefined {
-  const lastThinking = elements.thinking.at(-1)
-  if (lastThinking === undefined) return undefined
-  let sibling = lastThinking.nextElementSibling
-  while (sibling !== null) {
-    if (sibling instanceof HTMLElement) return sibling
-    sibling = sibling.nextElementSibling
-  }
-  return undefined
+/** Return a splittable closing layout only when Think is the leading content. */
+function closingLayoutFor(elements: TurnElements): ClosingLayout | undefined {
+  const first = elements.thinking[0]
+  const parent = first?.parentElement
+  if (first === undefined || parent === null || parent === undefined) return undefined
+  const children = Array.from(parent.children).filter((child): child is HTMLElement => child instanceof HTMLElement)
+  if (children.length <= elements.thinking.length) return undefined
+  const leadingThinking = children.slice(0, elements.thinking.length)
+  if (!leadingThinking.every((child, index) => child === elements.thinking[index])) return undefined
+  const lowerAnchor = children[elements.thinking.length]
+  if (lowerAnchor === undefined) return undefined
+  return { thinking: leadingThinking, lowerAnchor }
+}
+
+function rowGap(element: Element | null): number {
+  if (!(element instanceof HTMLElement)) return 0
+  const gap = Number.parseFloat(getComputedStyle(element).rowGap || element.style.rowGap)
+  return Number.isFinite(gap) ? gap : 0
 }
 
 function sameElements(left: TurnElements | undefined, right: TurnElements): boolean {

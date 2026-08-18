@@ -40,7 +40,7 @@ Restart the Web process after installing or updating the plugin. DSH composes it
 To install a downloaded release tarball instead:
 
 ```sh
-dsh plugin --profile web add ./dsh-fold-turns-0.1.4.tgz
+dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
 ```
 
 Remove the plugin with:

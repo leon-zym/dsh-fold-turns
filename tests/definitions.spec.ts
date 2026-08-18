@@ -28,7 +28,7 @@ describe('fold node Definitions', () => {
     })
   })
 
-  it('anchors fold-end immediately after the host-provided closing assistant', () => {
+  it('anchors fold-end immediately before the host-provided closing assistant', () => {
     const turn = {
       data: { get: () => ({ closing: { finalNode: { seq: 88 } }, branchUnavailable: false }) },
     }
@@ -42,7 +42,7 @@ describe('fold node Definitions', () => {
 
     expect(foldEndDefinition.buildViewNode?.(context)).toMatchObject({
       kind: 'fold-end',
-      anchorSeq: 88.001,
+      anchorSeq: 87.999,
       visibility: 'visible',
       data: { turn: 7 },
     })

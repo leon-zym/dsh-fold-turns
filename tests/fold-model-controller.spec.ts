@@ -63,16 +63,16 @@ function openSnapshotFor(turn: number) {
 }
 
 function snapshotFor({ turn, loadingOlder = false, order, timeline, closingBlocks = [{ kind: 'reasoning' }] }: SnapshotInput) {
-  const keys = order ?? [`user-${turn}`, `start-${turn}`, `process-${turn}`, `closing-${turn}`, `end-${turn}`, `tail-${turn}`]
+  const keys = order ?? [`user-${turn}`, `start-${turn}`, `process-${turn}`, `end-${turn}`, `closing-${turn}`, `tail-${turn}`]
   const nodes = new Map<string, ChatConversationViewNode>([
     [keys[0] as string, node(keys[0] as string, 'user', 1)],
     [keys[1] as string, node(keys[1] as string, 'fold-start', 1.001, { sourceSeq: 1 })],
     [keys[2] as string, node(keys[2] as string, 'assistant-step', 2)],
-    [keys[3] as string, node(keys[3] as string, 'assistant-step', 3, {
+    [keys[3] as string, node(keys[3] as string, 'fold-end', 2.999)],
+    [keys[4] as string, node(keys[4] as string, 'assistant-step', 3, {
       finalNode: { seq: 3 },
       blocks: closingBlocks,
     })],
-    [keys[4] as string, node(keys[4] as string, 'fold-end', 3.001)],
     [keys[5] as string, node(keys[5] as string, 'turn-tail', 3.1)],
   ])
   const tailData = { closing: { finalNode: { seq: 3 } }, branchUnavailable: false }

@@ -40,7 +40,7 @@ dsh plugin --profile web add dsh-fold-turns
 也可以安装下载好的 release tarball：
 
 ```sh
-dsh plugin --profile web add ./dsh-fold-turns-0.1.4.tgz
+dsh plugin --profile web add ./dsh-fold-turns-0.1.5.tgz
 ```
 
 卸载插件：

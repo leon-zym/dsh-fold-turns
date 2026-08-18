@@ -6,8 +6,8 @@ import { readTurnTail } from '../host/snapshot-projector.ts'
 import { foldChatNode } from './common.ts'
 import type { FoldEndData } from './types.ts'
 
-/** Relative anchor reserved for a plugin-owned row immediately after the closing assistant. */
-const END_AFTER_CLOSING = 0.001
+/** Relative anchor reserved for a plugin-owned row immediately before the closing assistant. */
+const END_BEFORE_CLOSING = 0.001
 
 interface FoldEndState {
   readonly turn: number
@@ -15,7 +15,7 @@ interface FoldEndState {
 }
 
 /**
- * Add one stable candidate immediately after the turn-tail's closing assistant.
+ * Add one stable candidate immediately before the turn-tail's closing assistant.
  *
  * Location data is materialized before view nodes, so the native turn-tail data
  * is available while a completed turn is assembled. Missing data remains a
@@ -47,7 +47,7 @@ export const foldEndDefinition: ConversationNodeDefinition<FoldEndState> = {
     return foldChatNode(
       context,
       FOLD_END_KIND,
-      closingSeq === undefined ? state.endSeq : closingSeq + END_AFTER_CLOSING,
+      closingSeq === undefined ? state.endSeq : closingSeq - END_BEFORE_CLOSING,
       data,
       closingSeq === undefined ? 'hidden' : 'visible',
     )

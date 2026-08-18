@@ -9,8 +9,8 @@ function completeTurn(overrides: Partial<FoldTurnDto> = {}): FoldTurnDto {
     { key: 'assistant-process', kind: 'assistant-step', anchorSeq: 3 },
     { key: 'tool', kind: 'tool-call', anchorSeq: 4 },
     { key: 'steering', kind: 'steering', anchorSeq: 5 },
+    { key: 'fold-end', kind: 'fold-end', anchorSeq: 9.999 },
     { key: 'closing', kind: 'assistant-step', anchorSeq: 10, finalSeq: 10, reasoningCount: 1 },
-    { key: 'fold-end', kind: 'fold-end', anchorSeq: 10.001 },
     { key: 'tail', kind: 'turn-tail', anchorSeq: 10.1 },
   ]
   return {

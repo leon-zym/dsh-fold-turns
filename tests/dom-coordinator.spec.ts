@@ -65,7 +65,7 @@ function fixture(includeProcess = true): Fixture {
   const tail = row('tail', 'turn-tail')
   flow.append(user, start)
   if (includeProcess) flow.append(process)
-  flow.append(closing, end, tail)
+  flow.append(end, closing, tail)
   flow.style.rowGap = '16px'
   return { scrollport, flow, start, top, bottom, process, processControl, thinking, finalContent, end, closing }
 }
@@ -102,17 +102,31 @@ describe('ChatFlowDomCoordinator', () => {
     coordinator.dispose()
   })
 
-  it('keeps the expanded visual, DOM, tab, and reading order aligned', () => {
+  it('visually places closing Think before the lower row without reparenting it', () => {
     const view = fixture()
+    const rectangle = (top: number, height: number) => ({
+      top,
+      right: 0,
+      bottom: top + height,
+      left: 0,
+      width: 0,
+      height,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    }) as DOMRect
+    view.end.getBoundingClientRect = () => rectangle(100, 40)
+    view.thinking.getBoundingClientRect = () => rectangle(156, 24)
+
     const coordinator = new ChatFlowDomCoordinator()
     const owner = {}
     coordinator.mountTop(owner, view.top)
     coordinator.updateTop(owner, plan, { expanded: true, loadingOlder: false, presentation: 'initial' })
 
     expect(view.thinking.parentElement).toBe(view.closing)
-    expect(view.closing.nextElementSibling).toBe(view.end)
-    expect(view.thinking.style.transform).toBe('')
-    expect(view.end.style.transform).toBe('')
+    expect(view.end.nextElementSibling).toBe(view.closing)
+    expect(view.thinking.style.transform).toBe('translateY(-56px)')
+    expect(view.end.style.transform).toBe('translateY(40px)')
     coordinator.dispose()
   })
 
@@ -227,7 +241,7 @@ describe('ChatFlowDomCoordinator', () => {
       coordinator.updateTop(owner, plan, { expanded: false, loadingOlder: false, presentation: 'live' })
       expect(view.process.style.display).toBe('')
 
-      view.flow.insertBefore(view.process, view.closing)
+      view.flow.insertBefore(view.process, view.end)
 
       expect(view.process.style.display).toBe('')
       expect(view.end.style.display).toBe('')
@@ -270,7 +284,7 @@ describe('ChatFlowDomCoordinator', () => {
     expect(view.end.style.display).toBe('')
 
     const replacement = row('process', 'tool-call')
-    view.flow.insertBefore(replacement, view.closing)
+    view.flow.insertBefore(replacement, view.end)
     await new Promise(resolve => setTimeout(resolve, 0))
 
     expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('available')
@@ -291,7 +305,7 @@ describe('ChatFlowDomCoordinator', () => {
 
     const replacement = row('process', 'tool-call')
     view.thinking.remove()
-    view.flow.insertBefore(replacement, view.closing)
+    view.flow.insertBefore(replacement, view.end)
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(coordinator.getSnapshot().byTurn.get(plan.turn)).toBe('checking')
     expect(replacement.style.display).toBe('')

@@ -147,7 +147,7 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
   const startAt = nodeIndex(turn.nodes, startCandidate.key)
   const endAt = nodeIndex(turn.nodes, endCandidate.key)
   const closingAt = nodeIndex(turn.nodes, closingNode.key)
-  if (startInputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(startInputAt < startAt && startAt < closingAt && closingAt < endAt)) {
+  if (startInputAt < 0 || startAt < 0 || endAt < 0 || closingAt < 0 || !(startInputAt < startAt && startAt < endAt && endAt < closingAt)) {
     return fail(turn.turn, 'invalid-order')
   }
 
@@ -173,17 +173,17 @@ export function planTurnFold(turn: FoldTurnDto): TurnFoldPlan {
       continue
     }
     if (node.kind === 'turn-tail') {
-      if (index <= endAt) return fail(turn.turn, 'invalid-order')
+      if (index <= closingAt) return fail(turn.turn, 'invalid-order')
       dispositions.set(node.key, 'tail')
       continue
     }
 
     const disposition = classifyNode(node.kind, index, startInputAt, closingAt)
     if (disposition === 'invalid') return fail(turn.turn, 'unknown-node-kind')
-    if (disposition === 'hidden' && !(index > startAt && index < closingAt)) {
+    if (disposition === 'hidden' && !(index > startAt && index < endAt)) {
       return fail(turn.turn, 'process-outside-boundary')
     }
-    if (disposition === 'visible' && index > closingAt && index < endAt) {
+    if (disposition === 'visible' && index > endAt && index < closingAt) {
       return fail(turn.turn, 'invalid-order')
     }
     dispositions.set(node.key, disposition)
